@@ -53,6 +53,24 @@ export function clearKeyCache(): void {
 }
 
 /**
+ * The keys to check this token with. A token signed with a key not in the saved set means
+ * Access has rotated its keys: the set is fetched again, at most once a minute, rather than
+ * refusing everyone until the hour is up.
+ */
+export async function keysFor(token: string, team: string, fetcher: typeof fetch = fetch, now = Date.now()): Promise<Jwk[]> {
+  const keys = await teamKeys(team, fetcher, now);
+  let kid: unknown;
+  try {
+    kid = (JSON.parse(new TextDecoder().decode(b64urlBytes(token.split('.')[0] ?? ''))) as { kid?: unknown }).kid;
+  } catch {
+    return keys;
+  }
+  if (typeof kid !== 'string' || keys.some((k) => k.kid === kid) || (keyCache && now - keyCache.at < 60_000)) return keys;
+  keyCache = null;
+  return teamKeys(team, fetcher, now);
+}
+
+/**
  * The signed-in person, or null when the token is missing, forged, for another app, or expired.
  * `keys` is the team's key set (teamKeys).
  */

@@ -3,7 +3,7 @@ import type { Change, PullResponse, PushResponse } from '../src/domain/sync';
 import { clearKeyCache } from '../worker/auth';
 import worker, { jwtPayload, whoami } from '../worker/index';
 import { nameFromEmail, purge } from '../worker/store';
-import { accessKeys, testEnv } from './worker-fakes';
+import { FREE_QUERIES, accessKeys, testEnv } from './worker-fakes';
 import { area, bin, item, season, spot } from './helpers';
 
 const b64url = (o: object) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -222,5 +222,112 @@ describe('the Worker: files (§12.3) and clean-up (§12.2)', () => {
     // A phone that hadn't pulled since before the purged delete starts again; one that had doesn't.
     expect((await pullAs(ANN, old.cursor)).reset).toBe(true);
     expect((await pullAs(ANN, seen.cursor)).reset).toBe(false);
+  });
+});
+
+describe('the Worker: deletes and what links to them (§12.2)', () => {
+  const pushOrdered = async (who: string, changes: Change[]) => (await (await call('/api/push', { as: who, method: 'POST', body: JSON.stringify({ changes, ordered: true }) })).json()) as PushResponse;
+  const live = async (type: string, id: string) => (await pullAs(ANN)).records.find((r) => r.type === type && r.id === id)?.data ?? null;
+  const del = (type: Change['type'], id: string): Change => ({ type, id, op: 'delete', base: null });
+
+  it('a put linking to a deleted record has the link cleared; one that belongs to it is refused', async () => {
+    await pushAs(DAN, house());
+    await pushAs(DAN, [del('bin', 'bn-BIN00001')]);
+    const res = await pushAs(ANN, [
+      put('item', item({ id: 'it-TEST0002', name: 'Wreath', binId: 'bn-BIN00001' })),
+      put('photo', { id: 'ph-PHOTO009', ownerType: 'bin', ownerId: 'bn-BIN00001', kind: 'photo', caption: '', order: 0 }),
+    ]);
+    expect(res.accepted.map((a) => a.id)).toEqual(['it-TEST0002']);
+    expect(res.rejected).toMatchObject([{ id: 'ph-PHOTO009', reason: 'what it belongs to was deleted on another phone', current: null }]);
+    expect(await live('item', 'it-TEST0002')).toMatchObject({ binId: '', spotId: '' });
+    expect(await live('photo', 'ph-PHOTO009')).toBeNull();
+  });
+
+  it('an ordered delete clears what still links to it, quietly; an item brings its category back', async () => {
+    await pushAs(DAN, [...house(), put('category', { id: 'holiday:Lights', part: 'holiday', name: 'Lights', order: 0, subcategories: [] })]);
+    // Records Dan's phone hadn't pulled when it deleted the area and the category.
+    await pushAs(ANN, [
+      put('item', item({ id: 'it-TEST0002', name: 'Lamp', category: 'Lights', binId: '', spotId: 'sp-SPOT0001' })),
+      put('photo', { id: 'ph-PHOTO009', ownerType: 'spot', ownerId: 'sp-SPOT0001', kind: 'photo', caption: '', order: 0 }),
+    ]);
+    const before = (await pullAs(ANN)).records.filter((r) => r.type === 'activity').length;
+    await pushOrdered(DAN, [del('category', 'holiday:Lights'), del('area', 'ar-AREA0001')]);
+    expect(await live('spot', 'sp-SPOT0001')).toBeNull();
+    expect(await live('photo', 'ph-PHOTO009')).toBeNull();
+    expect(await live('bin', 'bn-BIN00001')).toMatchObject({ spotId: '' });
+    expect(await live('item', 'it-TEST0002')).toMatchObject({ spotId: '', category: 'Lights' });
+    expect(await live('category', 'holiday:Lights')).toMatchObject({ name: 'Lights' });
+    const log = (await pullAs(ANN)).records.filter((r) => r.type === 'activity').map((r) => String(r.data!.summary));
+    expect(log.slice(before)).toEqual(['deleted category Lights', 'deleted area Attic']);
+  });
+
+  it('a delete from an earlier 0.1.5 build (not in push order) clears nothing else', async () => {
+    await pushAs(DAN, house());
+    await pushAs(DAN, [del('spot', 'sp-SPOT0001')]);
+    expect(await live('bin', 'bn-BIN00001')).toMatchObject({ spotId: 'sp-SPOT0001' });
+  });
+
+  it('a refused new record leaves a tombstone, so what links to it is cleared later', async () => {
+    await pushAs(DAN, house());
+    const res = await pushOrdered(DAN, [put('bin', bin({ id: 'bn-BIN00002', code: 'A-02', spotId: 'sp-SPOT0001', part: 'household' }))]);
+    expect(res.rejected[0]).toMatchObject({ reason: 'its spot is in the other part', current: null });
+    expect((await pullAs(ANN, 1)).records.find((r) => r.id === 'bn-BIN00002')).toMatchObject({ deleted: true });
+    await pushAs(DAN, [put('item', item({ id: 'it-TEST0002', binId: 'bn-BIN00002' }))]);
+    expect(await live('item', 'it-TEST0002')).toMatchObject({ binId: '' });
+  });
+});
+
+describe('the Worker: limits, keys, people, files, bin numbers (H5 review)', () => {
+  it('a push of 50 changes stays well within D1’s free-plan query limit', async () => {
+    await pushAs(DAN, house());
+    const many = Array.from({ length: 49 }, (_, i) => put('item', item({ id: `it-MANY${String(i).padStart(4, '0')}`, name: `Thing ${i}`, binId: 'bn-BIN00001' })));
+    env.DB.count.queries = 0;
+    const res = await pushAs(DAN, [put('bin', bin({ code: 'ATTIC-04', name: 'Christmas 4', spotId: 'sp-SPOT0001', seasonId: 'se-SEAS0001' })), ...many]);
+    expect(res.accepted).toHaveLength(50);
+    expect(env.DB.count.queries).toBeLessThanOrEqual(FREE_QUERIES / 4);
+    env.DB.count.queries = 0;
+    await pullAs(ANN);
+    expect(env.DB.count.queries).toBeLessThanOrEqual(10);
+  });
+
+  it('a key Access rotated in is fetched again, at most once a minute', async () => {
+    const rotated = await accessKeys('k2');
+    let fetched = 0;
+    vi.stubGlobal('fetch', async () => {
+      fetched++;
+      return new Response(JSON.stringify({ keys: fetched === 1 ? [keys.jwk] : [keys.jwk, rotated.jwk] }));
+    });
+    expect((await call('/api/me', { as: DAN })).status).toBe(200);
+    const token = await rotated.token(DAN);
+    // Within a minute of the last fetch, the saved keys stand.
+    expect((await call('/api/me', { token })).status).toBe(401);
+    const later = Date.now() + 61_000;
+    vi.spyOn(Date, 'now').mockReturnValue(later);
+    expect((await call('/api/me', { token })).status).toBe(200);
+    vi.restoreAllMocks();
+    expect(fetched).toBe(2);
+  });
+
+  it('two first requests at once make one person', async () => {
+    await Promise.all([call('/api/me', { as: 'new@example.com' }), call('/api/me', { as: 'new@example.com' })]);
+    expect((await pullAs(ANN)).records.filter((r) => r.type === 'person' && r.data!.email === 'new@example.com')).toHaveLength(1);
+  });
+
+  it('only images upload, and files come back with nosniff', async () => {
+    await pushAs(DAN, house());
+    await pushAs(DAN, [put('photo', { id: 'ph-PHOTO001', ownerType: 'item', ownerId: 'it-TEST0001', kind: 'photo', caption: '', order: 0 })]);
+    expect((await call('/api/files/ph-PHOTO001', { as: DAN, method: 'PUT', body: '<script>', headers: { 'content-type': 'text/html' } })).status).toBe(415);
+    expect((await call('/api/files/ph-PHOTO001', { as: DAN, method: 'PUT', body: new Uint8Array([1]), headers: { 'content-type': 'image/jpeg' } })).status).toBe(200);
+    const got = await call('/api/files/ph-PHOTO001', { as: ANN });
+    expect([got.headers.get('content-type'), got.headers.get('x-content-type-options')]).toEqual(['image/jpeg', 'nosniff']);
+  });
+
+  it('a renumbered bin sent again with its old code keeps the number it was given', async () => {
+    await pushAs(DAN, house());
+    await pushAs(ANN, [put('bin', bin({ id: 'bn-BIN00002', code: 'ATTIC-04', name: 'Easter' }))]);
+    // Ann's phone changed the bin again before it pulled the new number.
+    const res = await pushAs(ANN, [put('bin', bin({ id: 'bn-BIN00002', code: 'ATTIC-04', name: 'Easter eggs' }))]);
+    expect(res.notices).toEqual([{ kind: 'bin-code', id: 'bn-BIN00002', from: 'ATTIC-04', to: 'ATTIC-05' }]);
+    expect((await pullAs(DAN)).records.find((r) => r.id === 'bn-BIN00002')!.data).toMatchObject({ code: 'ATTIC-05', name: 'Easter eggs' });
   });
 });

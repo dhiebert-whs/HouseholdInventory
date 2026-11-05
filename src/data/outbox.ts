@@ -23,7 +23,7 @@ export interface OutboxRow {
   op: 'put' | 'delete';
   /** The record as it travels (toWire); absent for a delete. */
   data?: Record<string, unknown>;
-  /** Queue position: when this record was first changed since its last push. */
+  /** When this record was first changed since its last push: the order within its type (pushOnce sends parents first, deletes last). */
   seq: number;
   /** Changes on every write, so a push only clears the version it sent. */
   rev: number;

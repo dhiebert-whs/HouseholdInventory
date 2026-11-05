@@ -4,15 +4,18 @@
 // (outbox.ts). A record with a change waiting in the outbox keeps the phone's version until that
 // change is pushed: last write wins on the server, in the order it accepts them (§12.1).
 import type { Table } from 'dexie';
-import { checkData } from '../domain/integrity';
 import { nameKey } from '../domain/types';
 import {
+  ACTIVITY_DAYS,
   PUSH_BATCH,
   SYNC_TABLES,
   TABLE_OF,
   recordId,
+  pushRank,
   recordKey,
   toWire,
+  withoutGone,
+  type IsGone,
   type Notice,
   type Person,
   type PulledRecord,
@@ -21,10 +24,10 @@ import {
 } from '../domain/sync';
 import { NoServerError, OfflineError, SignedOutError, type SyncApi } from '../io/sync-api';
 import type { InventoryDb } from './db';
-import { loadSnapshot } from './inventory';
 import { nextRev, outboxKey, type OutboxRow } from './outbox';
 
 const TABLES = Object.keys(SYNC_TABLES) as SyncTable[];
+const DAY = 86_400_000;
 const table = (db: InventoryDb, t: SyncTable) => db.table(t) as Table<Record<string, unknown>, unknown>;
 const syncedTables = (db: InventoryDb) => TABLES.map((t) => table(db, t));
 
@@ -65,12 +68,14 @@ function rowFor(type: RecordType, data: Record<string, unknown>, updatedAt: numb
 /**
  * Stores pulled records (§12.1). Records with a change waiting in the outbox are skipped, and so
  * keep their version number, so the push can tell the server what the phone last saw. Returns
- * how many records changed and the owners of photos that changed.
+ * how many records changed, the owners of photos that changed, and the deletes ("type:id",
+ * for repairLinks).
  */
-export async function applyPulled(db: InventoryDb, records: readonly PulledRecord[]): Promise<{ changed: number; photoOwners: string[] }> {
+export async function applyPulled(db: InventoryDb, records: readonly PulledRecord[]): Promise<{ changed: number; photoOwners: string[]; gone: string[] }> {
   return db.transaction('rw', [...syncedTables(db), db.outbox, db.syncMeta, db.people, db.activity], async () => {
     let changed = 0;
     const owners = new Set<string>();
+    const gone: string[] = [];
     const pending = new Set((await db.outbox.toCollection().primaryKeys()) as string[]);
     for (const r of records) {
       if (r.type === 'person') {
@@ -89,6 +94,7 @@ export async function applyPulled(db: InventoryDb, records: readonly PulledRecor
       const existing = await t.get(key);
       if (r.type === 'photo') owners.add(String((r.data ?? existing)?.ownerId ?? ''));
       if (r.deleted || !r.data) {
+        gone.push(outboxKey(r.type, r.id));
         if (existing) {
           await t.delete(key);
           changed++;
@@ -101,7 +107,7 @@ export async function applyPulled(db: InventoryDb, records: readonly PulledRecor
       changed++;
     }
     owners.delete('');
-    return { changed, photoOwners: [...owners] };
+    return { changed, photoOwners: [...owners], gone };
   });
 }
 
@@ -133,13 +139,17 @@ export async function enqueueAll(db: InventoryDb): Promise<number> {
 }
 
 /**
- * Empties the phone's records, outbox and sync state, keeping `keep` (outbox keys) and their
- * changes: "Use the server's data" (keep nothing), or a cursor too old (§12.2: keep the
- * changes not yet pushed). Then a pull from 0 brings everything down.
+ * Empties the phone's records, outbox and sync state: "Use the server's data" (keep nothing), or a
+ * cursor too old (§12.2: keep the changes not yet pushed, and the photos not yet uploaded, whose
+ * images only this phone has). Then a pull from 0 brings everything down.
  */
 export async function clearLocal(db: InventoryDb, keepPending: boolean): Promise<void> {
   await db.transaction('rw', [...syncedTables(db), db.outbox, db.uploads, db.syncMeta, db.people, db.activity], async () => {
-    const pending = keepPending ? new Set((await db.outbox.toCollection().primaryKeys()) as string[]) : new Set<string>();
+    const pending = new Set<string>();
+    if (keepPending) {
+      for (const k of (await db.outbox.toCollection().primaryKeys()) as string[]) pending.add(k);
+      for (const id of (await db.uploads.toCollection().primaryKeys()) as string[]) pending.add(outboxKey('photo', id));
+    }
     for (const name of TABLES) {
       const type = SYNC_TABLES[name];
       const t = table(db, name);
@@ -159,96 +169,63 @@ export async function clearLocal(db: InventoryDb, keepPending: boolean): Promise
 }
 
 /**
- * After a pull, links to records another phone deleted are cleared, so the data stays whole
- * (backups must pass checkData, §7): an item in a deleted bin has no home yet, a deleted
- * season or display is cleared, photos, tasks and runs of deleted records go. These are
- * ordinary changes, so they sync like any other.
+ * After a pull, links to records another phone deleted (`gone`: the deletes pulled, as
+ * "type:id") are cleared the way the server clears them (withoutGone), so the data stays whole
+ * (backups must pass checkData, §7): an item in a deleted bin has no home yet, a deleted season
+ * or display is cleared, photos, tasks and runs of deleted records go, and an item's deleted
+ * category comes back. Only deletes count: a record that isn't here may still be on its way
+ * (another phone's push takes several batches). The server makes the same changes to its copy,
+ * and to a waiting change when it arrives, so these stay on this phone (syncMeta in the scope)
+ * and nothing is sent.
  */
-export async function repairLinks(db: InventoryDb): Promise<number> {
-  const snap = await loadSnapshot(db);
-  const photos = await db.pictures.toArray();
-  if (checkData({ ...snap, photos }).length === 0) return 0;
-  return db.transaction('rw', [...syncedTables(db), db.settings], async () => {
-    let fixed = 0;
-    const has = <T extends { id: string }>(list: readonly T[]) => new Set(list.map((x) => x.id));
-    const areas = has(await db.areas.toArray());
-    const spots = has((await db.spots.toArray()).filter((s) => areas.has(s.areaId)));
-    const bins = has(await db.bins.toArray());
-    const seasons = has(await db.seasons.toArray());
-    const displays = has(await db.displays.toArray());
-    for (const s of await db.spots.toArray()) {
-      // A spot whose area was deleted: its records lose their home below, and it goes.
-      if (!areas.has(s.areaId)) {
-        await db.spots.delete(s.id);
-        fixed++;
-      }
+export async function repairLinks(db: InventoryDb, gone: ReadonlySet<string>): Promise<number> {
+  if (gone.size === 0) return 0;
+  return db.transaction('rw', [...syncedTables(db), db.syncMeta, db.settings], async () => {
+    // A delete pulled and then undone (a put after it, or one waiting here) doesn't count.
+    const dead = new Set<string>();
+    for (const k of gone) {
+      const at = k.indexOf(':');
+      const type = k.slice(0, at) as RecordType;
+      if (!Object.hasOwn(TABLE_OF, type) || !(await table(db, TABLE_OF[type]).get(recordKey(type, k.slice(at + 1))))) dead.add(k);
     }
-    for (const b of await db.bins.toArray()) {
-      const next = { ...b, spotId: spots.has(b.spotId) ? b.spotId : '', seasonId: seasons.has(b.seasonId) ? b.seasonId : '' };
-      if (next.spotId !== b.spotId || next.seasonId !== b.seasonId) {
-        await db.bins.put(next);
-        fixed++;
+    const isGone: IsGone = (type, id) => dead.has(outboxKey(type, id));
+    let fixed = 0;
+    // Spots and tasks first: a spot that goes takes its bins' and items' links with it, a task its ticks.
+    for (const name of ['spots', 'seasonTasks', 'bins', 'items', 'seasonRuns', 'pictures'] as const) {
+      const type = SYNC_TABLES[name];
+      const t = table(db, name);
+      for (const row of await t.toArray()) {
+        const next = withoutGone(type, row, isGone);
+        if (next === 'drop') {
+          await t.delete(row.id);
+          dead.add(outboxKey(type, String(row.id)));
+          fixed++;
+        } else if (next) {
+          await t.put(next);
+          fixed++;
+        }
       }
     }
     const cats = new Set((await db.categoryList.toArray()).map((c) => `${c.part}\n${nameKey(c.name)}`));
     for (const i of await db.items.toArray()) {
-      const next = {
-        ...i,
-        binId: bins.has(i.binId) ? i.binId : '',
-        spotId: spots.has(i.spotId) ? i.spotId : '',
-        seasonId: seasons.has(i.seasonId) ? i.seasonId : '',
-        displayId: displays.has(i.displayId) ? i.displayId : '',
-        outDisplayId: displays.has(i.outDisplayId) ? i.outDisplayId : '',
-      };
-      if (JSON.stringify(next) !== JSON.stringify(i)) {
-        await db.items.put(next);
-        fixed++;
-      }
       const cat = `${i.part}\n${nameKey(i.category)}`;
-      if (!cats.has(cat)) {
-        cats.add(cat);
-        const order = await db.categoryList.where('part').equals(i.part).count();
-        await db.categoryList.put({ part: i.part, name: i.category, order, subcategories: [] });
-        fixed++;
-      }
-    }
-    const tasks = await db.seasonTasks.toArray();
-    for (const t of tasks) {
-      if (!seasons.has(t.seasonId)) {
-        await db.seasonTasks.delete(t.id);
-        fixed++;
-      }
-    }
-    for (const r of await db.seasonRuns.toArray()) {
-      if (!seasons.has(r.seasonId)) {
-        await db.seasonRuns.delete(r.id);
-        fixed++;
-        continue;
-      }
-      const done = r.doneTaskIds.filter((id) => tasks.some((t) => t.id === id && t.seasonId === r.seasonId));
-      if (done.length !== r.doneTaskIds.length) {
-        await db.seasonRuns.put({ ...r, doneTaskIds: done });
-        fixed++;
-      }
-    }
-    const owners: Record<string, Set<string>> = { item: has(await db.items.toArray()), bin: bins, spot: spots, season: seasons, display: displays };
-    for (const p of photos) {
-      if (!owners[p.ownerType]?.has(p.ownerId)) {
-        await db.pictures.delete(p.id);
-        fixed++;
-      } else if (p.seasonId && !seasons.has(p.seasonId)) {
-        await db.pictures.update(p.id, { seasonId: undefined });
-        fixed++;
-      }
+      if (cats.has(cat) || !dead.has(outboxKey('category', `${i.part}:${i.category}`))) continue;
+      cats.add(cat);
+      const order = await db.categoryList.where('part').equals(i.part).count();
+      await db.categoryList.put({ part: i.part, name: i.category, order, subcategories: [] });
+      fixed++;
     }
     if (fixed) await db.settings.put({ key: 'lastChangeAt', value: Date.now() });
     return fixed;
   });
 }
 
-/** Sends up to PUSH_BATCH outbox changes. Returns how many were sent (0: nothing waiting). */
+/**
+ * Sends up to PUSH_BATCH outbox changes, in pushRank order (parents first, deletes last), so the
+ * server's copy is whole after every batch. Returns how many were sent (0: nothing waiting).
+ */
 export async function pushOnce(db: InventoryDb, api: SyncApi): Promise<number> {
-  const rows = await db.outbox.orderBy('seq').limit(PUSH_BATCH).toArray();
+  const rows = (await db.outbox.toArray()).sort((a, b) => pushRank(a.type, a.op) - pushRank(b.type, b.op) || a.seq - b.seq).slice(0, PUSH_BATCH);
   if (rows.length === 0) return 0;
   const versions = await db.syncMeta.bulkGet(rows.map((r) => versionKey(r.type, r.id)));
   const res = await api.push(rows.map((r, i) => ({ type: r.type, id: r.id, op: r.op, ...(r.data && { data: r.data }), base: (versions[i]?.value as number | undefined) ?? null })));
@@ -296,14 +273,22 @@ async function storeImage(db: InventoryDb, id: string, image: Blob, field: 'thum
   });
 }
 
+/** Photos whose image the server didn't have, not asked for again until the app restarts. */
+const noImage = new WeakMap<InventoryDb, Set<string>>();
+
 /** Other phones' photos: their thumbnails (or images, if no thumbnail was uploaded). Returns the owners that got one. */
 export async function downloadThumbnails(db: InventoryDb, api: SyncApi, limit = 20): Promise<string[]> {
-  const want = (await db.pictures.filter((p) => !p.thumb && !p.full && !!p.r2Key).limit(limit).toArray()).map((p) => p.id);
+  const skip = noImage.get(db) ?? new Set<string>();
+  noImage.set(db, skip);
+  const want = (await db.pictures.filter((p) => !p.thumb && !p.full && !!p.r2Key && !skip.has(p.id)).limit(limit).toArray()).map((p) => p.id);
   const owners: string[] = [];
   for (const id of want) {
     const thumb = await api.download(id, true);
     const image = thumb ?? (await api.download(id, false));
-    if (!image) continue;
+    if (!image) {
+      skip.add(id);
+      continue;
+    }
     const owner = await storeImage(db, id, image, thumb ? 'thumb' : 'full');
     if (owner) owners.push(owner);
   }
@@ -336,30 +321,33 @@ export type SyncStatus =
    */
   | { kind: 'choose' };
 
-/** Pull every page after the cursor. Returns how many records changed and the photo owners touched. */
-async function pullAll(db: InventoryDb, api: SyncApi, onProgress?: (n: number) => void): Promise<{ changed: number; photoOwners: string[] }> {
+/** Pull every page after the cursor. Returns how many records changed, the photo owners touched, and the deletes. */
+async function pullAll(db: InventoryDb, api: SyncApi, onProgress?: (n: number) => void): Promise<{ changed: number; photoOwners: string[]; gone: string[] }> {
   let cursor = (await meta<number>(db, CURSOR)) ?? 0;
   let changed = 0;
   let got = 0;
   const owners = new Set<string>();
+  const gone = new Set<string>();
   for (;;) {
     const res = await api.pull(cursor);
     if (res.reset) {
       await clearLocal(db, true);
       cursor = 0;
+      gone.clear();
       continue;
     }
     const r = await applyPulled(db, res.records);
     changed += r.changed;
     got += res.records.length;
     for (const o of r.photoOwners) owners.add(o);
+    for (const k of r.gone) gone.add(k);
     cursor = res.cursor;
     await db.syncMeta.bulkPut([
       { key: CURSOR, value: cursor },
       { key: ME, value: res.me },
     ]);
     onProgress?.(got);
-    if (!res.more) return { changed, photoOwners: [...owners] };
+    if (!res.more) return { changed, photoOwners: [...owners], gone: [...gone] };
   }
 }
 
@@ -388,15 +376,17 @@ export async function syncOnce(db: InventoryDb, api: SyncApi, deps: SyncDeps = {
       }
       await db.syncMeta.put({ key: JOINED, value: true });
     }
-    let { changed, photoOwners } = await pullAll(db, api, deps.onProgress);
+    let { photoOwners, gone } = await pullAll(db, api, deps.onProgress);
     let pushed = 0;
     for (let n = await pushOnce(db, api); n > 0; n = await pushOnce(db, api)) pushed += n;
     if (pushed) {
       const again = await pullAll(db, api);
-      changed += again.changed;
       photoOwners = [...photoOwners, ...again.photoOwners];
+      gone = [...gone, ...again.gone];
     }
-    if (changed && (await repairLinks(db))) while ((await pushOnce(db, api)) > 0);
+    await repairLinks(db, new Set(gone));
+    // The server keeps the log two years (D8); so does the phone.
+    await db.activity.where('at').below(Date.now() - ACTIVITY_DAYS * DAY).delete();
     while ((await uploadPhotos(db, api)) > 0);
     photoOwners = [...photoOwners, ...(await downloadThumbnails(db, api))];
     if (photoOwners.length) deps.onPhotos?.([...new Set(photoOwners)]);

@@ -8,9 +8,9 @@ import { getItem, loadSnapshot, replaceAll, setQuantity } from '../src/data/inve
 import { addItem, updateItem } from '../src/data/items';
 import { addPhotos, deletePhotosOf, getThumbnail, photosOf } from '../src/data/photos';
 import { addBin, deleteBin } from '../src/data/places';
-import { applyPulled, fetchFullImage, loadNotices, syncOnce, useServerData } from '../src/data/sync';
+import { applyPulled, clearLocal, enqueueAll, fetchFullImage, loadNotices, pushOnce, syncOnce, useServerData } from '../src/data/sync';
 import { checkData } from '../src/domain/integrity';
-import { httpApi, type SyncApi } from '../src/io/sync-api';
+import { OfflineError, httpApi, type SyncApi } from '../src/io/sync-api';
 import { clearKeyCache } from '../worker/auth';
 import worker from '../worker/index';
 import { purge } from '../worker/store';
@@ -240,6 +240,73 @@ describe('sync between two phones (§12)', () => {
     const pages = httpApi(async () => new Response('<!doctype html>', { status: 404, headers: { 'content-type': 'text/html' } }));
     expect(await syncOnce(dan, pages)).toEqual({ kind: 'no-server' });
     expect(await dan.outbox.count()).toBeGreaterThan(0);
+  });
+});
+
+describe('sync: fixes from the H5 review', () => {
+  const whole = async (db: InventoryDb) => checkData({ ...(await loadSnapshot(db)), photos: await db.pictures.toArray() });
+
+  it('a phone that syncs between two batches of another’s upload leaves its links alone', async () => {
+    const dan = phone();
+    const many = Array.from({ length: 60 }, (_, i) => item({ id: `it-n${i}`, name: `Thing ${i}`, binId: 'bn-xmas4' }));
+    await replaceAll(dan, dataset({ ...household(), items: many }));
+    expect((await DAN.pull(0)).serverEmpty).toBe(true);
+    await enqueueAll(dan);
+    await dan.syncMeta.put({ key: 'joined', value: true });
+    // The first batch: parents first, so the bins and spots are there before their items.
+    await pushOnce(dan, DAN);
+    const ann = phone();
+    expect(await syncOnce(ann, ANN)).toMatchObject({ kind: 'synced' });
+    expect(await ann.outbox.count()).toBe(0);
+    expect(await whole(ann)).toEqual([]);
+    await syncOnce(dan, DAN);
+    await syncOnce(ann, ANN);
+    for (const db of [dan, ann]) {
+      expect((await db.items.toArray()).filter((i) => i.binId !== 'bn-xmas4').map((i) => i.id)).toEqual([]);
+      expect(await whole(db)).toEqual([]);
+    }
+  });
+
+  it('the outbox goes parents first, deletes last and children first', async () => {
+    const dan = await dansPhone();
+    await deleteBin(dan, 'bn-spare', 'to-spot');
+    const sent: string[] = [];
+    await pushOnce(dan, { ...DAN, push: async (changes) => (sent.push(...changes.map((c) => `${c.op} ${c.type}`)), { accepted: [], rejected: [], notices: [] }) });
+    const order = [...new Set(sent)];
+    expect(order.indexOf('put area')).toBeLessThan(order.indexOf('put bin'));
+    expect(order.indexOf('put bin')).toBeLessThan(order.indexOf('put item'));
+    expect(order.at(-1)).toBe('delete bin');
+  });
+
+  it('a reset keeps photos not uploaded yet, whose image only this phone has', async () => {
+    const dan = await dansPhone();
+    await addPhotos(dan, 'item', 'it-lights', [jpeg(3)]);
+    await syncOnce(dan, { ...DAN, upload: async () => Promise.reject(new OfflineError('offline')) });
+    expect(await dan.uploads.count()).toBe(1);
+    await clearLocal(dan, true);
+    const [p] = await photosOf(dan, 'it-lights');
+    expect(await bytes(p!.full)).toEqual([0xff, 0xd8, 3]);
+  });
+
+  it('the phone keeps the log two years, as the server does', async () => {
+    const dan = await dansPhone();
+    await dan.activity.put({ id: 'ac-old', at: Date.now() - 800 * 86_400_000, personId: 'pp-x', summary: 'old', recordType: 'item', recordId: '', part: '', areaId: '', seasonId: '' });
+    await syncOnce(dan, DAN);
+    expect(await dan.activity.get('ac-old')).toBeUndefined();
+  });
+
+  it('a photo whose image the server hasn’t got isn’t asked for again and again', async () => {
+    const dan = await dansPhone();
+    await addPhotos(dan, 'item', 'it-lights', [jpeg(4)]);
+    await syncOnce(dan, DAN);
+    env.FILES.objects.clear();
+    const ann = phone();
+    let asked = 0;
+    const api = { ...ANN, download: async (id: string, thumb: boolean) => (asked++, ANN.download(id, thumb)) };
+    await syncOnce(ann, api);
+    expect(asked).toBe(2);
+    await syncOnce(ann, api);
+    expect(asked).toBe(2);
   });
 });
 

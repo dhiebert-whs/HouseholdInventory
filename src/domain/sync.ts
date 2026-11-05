@@ -26,7 +26,9 @@ export const TABLE_OF = Object.fromEntries(Object.entries(SYNC_TABLES).map(([t, 
 /** Every type the server sends: the phones' records, plus people and the activity log, which only the server writes. */
 export type ServerType = RecordType | 'person' | 'activity';
 
-export const isRecordType = (t: unknown): t is RecordType => RECORD_TYPES.includes(t as RecordType);
+export function isRecordType(t: unknown): t is RecordType {
+  return RECORD_TYPES.includes(t as RecordType);
+}
 
 /**
  * A record's id on the server. Tags and categories are keyed by part and name on the phone, so
@@ -70,7 +72,75 @@ export interface Change {
 
 export interface PushRequest {
   changes: Change[];
+  /**
+   * The changes come in pushRank order (since the H5 review), so the server’s copy is whole after every
+   * batch and a delete can clear what still links to it. Absent from earlier 0.1.5 builds.
+   */
+  ordered?: boolean;
 }
+
+/** Parents before the records that link to them: an item's bin, a bin's spot, a spot's area… */
+const PUT_ORDER: readonly RecordType[] = ['area', 'spot', 'season', 'display', 'bin', 'tag', 'category', 'item', 'task', 'run', 'photo'];
+
+/**
+ * The order a phone pushes its outbox in (§12.1): new and changed records parents first, then
+ * deletes children first, each type in the order it was changed. A push can take several
+ * batches, and another phone may pull between them; in this order nothing it pulls links to a
+ * record that hasn't arrived yet or is already gone.
+ */
+export function pushRank(type: RecordType, op: 'put' | 'delete'): number {
+  const i = PUT_ORDER.indexOf(type);
+  return op === 'put' ? i : 2 * PUT_ORDER.length - 1 - i;
+}
+
+/** Is this record deleted (§12.2)? By type and id. */
+export type IsGone = (type: RecordType, id: string) => boolean;
+
+/**
+ * A record without its links to deleted records (§12.2), as the server and the phones both clear
+ * them: an item in a deleted bin has no home yet, a deleted season or display is cleared, a
+ * deleted task is unticked. 'drop': the record goes with the one it belongs to (a spot with its
+ * area, a photo with its owner, a task or run with its season). null: nothing to change. An
+ * item's category is the caller's to restore.
+ */
+export function withoutGone(type: RecordType, data: Record<string, unknown>, gone: IsGone): Record<string, unknown> | 'drop' | null {
+  const id = (v: unknown) => (typeof v === 'string' ? v : '');
+  const next = { ...data };
+  const clear = (field: string, t: RecordType) => {
+    if (id(next[field]) && gone(t, id(next[field]))) next[field] = '';
+  };
+  switch (type) {
+    case 'item':
+      clear('binId', 'bin');
+      clear('spotId', 'spot');
+      clear('seasonId', 'season');
+      clear('displayId', 'display');
+      clear('outDisplayId', 'display');
+      break;
+    case 'bin':
+      clear('spotId', 'spot');
+      clear('seasonId', 'season');
+      break;
+    case 'spot':
+      if (gone('area', id(data.areaId))) return 'drop';
+      break;
+    case 'photo':
+      if (isRecordType(data.ownerType) && gone(data.ownerType, id(data.ownerId))) return 'drop';
+      if (id(data.seasonId) && gone('season', id(data.seasonId))) delete next.seasonId;
+      break;
+    case 'task':
+      if (gone('season', id(data.seasonId))) return 'drop';
+      break;
+    case 'run':
+      if (gone('season', id(data.seasonId))) return 'drop';
+      if (Array.isArray(data.doneTaskIds)) next.doneTaskIds = data.doneTaskIds.filter((t) => !gone('task', id(t)));
+      break;
+  }
+  return JSON.stringify(next) === JSON.stringify(data) ? null : next;
+}
+
+/** The category record an item belongs to, by the id it has on the server ("holiday:Lights"). */
+export const categoryIdOf = (item: Record<string, unknown>) => `${String(item.part)}:${String(item.category)}`;
 
 /** Something the server changed or refused that the person should be told about (§12.1). */
 export type Notice =
