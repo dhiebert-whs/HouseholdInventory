@@ -4,9 +4,9 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InventoryDb } from '../src/data/db';
-import { getItem, loadSnapshot, replaceAll } from '../src/data/inventory';
+import { getItem, loadSnapshot, replaceAll, setQuantity } from '../src/data/inventory';
 import { addItem, updateItem } from '../src/data/items';
-import { addPhotos, photosOf } from '../src/data/photos';
+import { addPhotos, deletePhotosOf, getThumbnail, photosOf } from '../src/data/photos';
 import { addBin, deleteBin } from '../src/data/places';
 import { applyPulled, fetchFullImage, loadNotices, syncOnce, useServerData } from '../src/data/sync';
 import { checkData } from '../src/domain/integrity';
@@ -78,6 +78,18 @@ describe('the outbox (§12.1)', () => {
     const [photo] = await photosOf(db, 'it-lights');
     expect((await db.outbox.get(`photo:${photo!.id}`))!.data).not.toHaveProperty('full');
     expect(await db.uploads.get(photo!.id)).toBeTruthy();
+
+    // Table.update() and where().delete() are recorded too; a thumbnail made on the phone isn't.
+    await setQuantity(db, 'it-drill', 5);
+    expect((await db.outbox.get('item:it-drill'))!.data).toMatchObject({ quantity: 5 });
+    const before = (await db.outbox.get(`photo:${photo!.id}`))!.rev;
+    await db.pictures.update(photo!.id, { thumb: null });
+    await db.outbox.update(`photo:${photo!.id}`, { rev: before });
+    await getThumbnail(db, 'it-lights', async () => new Blob([new Uint8Array([5])]));
+    expect((await db.outbox.get(`photo:${photo!.id}`))!.rev).toBe(before);
+    await db.transaction('rw', db.pictures, () => deletePhotosOf(db, ['it-lights']));
+    expect(await db.outbox.get(`photo:${photo!.id}`)).toMatchObject({ op: 'delete' });
+    expect(await db.uploads.get(photo!.id)).toBeUndefined();
 
     const n = await db.outbox.count();
     await applyPulled(db, [{ type: 'item', id: 'it-new', data: item({ id: 'it-new', name: 'From Ann' }) as never, updatedAt: 1, updatedBy: 'pp-ann', deleted: false }]);
@@ -242,5 +254,6 @@ describe('the sync line (F15)', () => {
     expect(syncLine(v({ kind: 'syncing' }), now)).toBe('Syncing…');
     expect(syncLine(v({ kind: 'signed-out' }, 1), now)).toBe('Signed out · 1 change waiting');
     expect(syncLine(v({ kind: 'no-server' }), now)).toBeNull();
+    expect(syncLine(v({ kind: 'starting' }), now)).toBeNull();
   });
 });

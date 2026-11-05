@@ -2,7 +2,7 @@
 
 For whoever looks after the app next: Dan, or a future Claude Code session. It covers what the app is, where everything lives and how to change it safely.
 
-Written 2026-11-02, updated 2026-11-03 at app version 0.1.4 (SPEC v3.0, milestone H4: the Holiday setup; next milestone H5, sync and sign-in).
+Written 2026-11-02, updated 2026-11-05 at app version 0.1.5 (SPEC v3.0, milestone H5: sync and sign-in; next milestone H6, the Holiday takedown).
 
 ---
 
@@ -14,8 +14,8 @@ A household inventory web app (PWA): what's in each bin and on each shelf, with 
 |---|---|
 | **Code** | GitHub, `dhiebert-whs/HouseholdInventory` (`upstream` remote = the FRC app, for reference only; nothing is merged back) |
 | **Users** | The family, each on an iPhone, the app added to the home screen from Safari |
-| **Where the data lives (now)** | In each phone's browser storage (IndexedDB via Dexie, database `home-inventory`). Until H5 there is **no sync**: each phone has its own copy, and backups are the only way to move data |
-| **Where it's going** | H3 (0.1.3) split the app into Household and Holiday parts with a switch; H4 (0.1.4) added the Holiday setup: displays, the setup list, Unpack, setup photos, the calendar file; H5 adds a Cloudflare Worker + D1 + R2 server and sync between phones (SPEC v3.0 §12, §15) |
+| **Where the data lives (now)** | On the server (Cloudflare D1 and R2, on Dan's free tier) and on each phone (IndexedDB via Dexie, database `home-inventory`), synced (H5, §9 below). The app at `hiebert-home-inventory.dhiebert7251.workers.dev` syncs; the GitHub Pages copy has no server and keeps its data on the phone only |
+| **Where it's going** | H3 (0.1.3) split the app into Household and Holiday parts with a switch; H4 (0.1.4) added the Holiday setup; H5 (0.1.5) added the server and sync between phones; H6 adds the takedown (SPEC v3.0 §15) |
 | **Stack** | TypeScript, Preact, Vite; Dexie; Papa Parse (CSV), JSZip, a QR library, a barcode scanner with the zxing fallback (iPhone Safari has no BarcodeDetector); Vitest |
 
 ## 2. Where everything is
@@ -84,14 +84,31 @@ The routine that kept the FRC app's data safe:
 
 Never remove the home-screen app or clear Safari's website data for its address before a **Full backup**: until H5 that erases the inventory on that phone.
 
-## 7. Keeping the data safe (until H5)
+## 7. Keeping the data safe
 
 - **More › Backup & restore › Full backup (ZIP)**, then save to Files or iCloud Drive. The reminder is monthly by default (More › Settings; 0 turns it off).
 - **Restore** replaces everything on the phone with a backup, after a comparison and an "I understand" tick.
 - If the app shows first-time setup on a phone that had data, iOS cleared its storage: choose **Restore a backup file**.
+- **With sync (the workers.dev copy):** the server holds the main copy, so a phone that loses its storage downloads everything again on the next launch; only changes that hadn't synced are lost (the sync line shows them waiting). **Restore** there replaces the data on every family phone.
 
 ## 8. Working with Claude Code
 
 - Start a session with: "Read docs/HANDOFF.md and docs/SPEC.md, then …".
 - Ask for questions before code when a feature isn't fully specified, and for the details it filled in to be listed for you to confirm.
 - Ask for an independent review in a fresh session for anything touching backups, restore, the database or sync (SPEC §15 calls for one at H4).
+
+## 9. The server and sync (H5)
+
+| | |
+|---|---|
+| **Address** | `https://hiebert-home-inventory.dhiebert7251.workers.dev` |
+| **Code** | `worker/` (the Worker), `src/data/outbox.ts` and `src/data/sync.ts` (the phone), `src/domain/sync.ts` (shared rules), `cloudflare.config.ts` |
+| **Sign-in** | Cloudflare Access, Zero Trust team `hiebert-personal`, app "Hiebert Home Inventory" (one-month session, emailed one-time codes). The API also checks Access's signed token (`worker/auth.ts`) |
+| **Data** | D1 database `hiebert-home-inventory` (table `records`, made by the Worker on first use), R2 bucket `hiebert-home-inventory-files` (photos) |
+| **Clean-up** | Daily at 09:00 UTC: deletes older than 90 days and their photos; activity older than 2 years |
+
+**Add or remove a family member:** Cloudflare dashboard › Zero Trust › Access › Applications › Hiebert Home Inventory › Policies › the allow policy › add or remove the email. Their first sign-in makes their Person ("ann@…" → "Ann"); they can change the name in More › Settings.
+
+**Deploy:** `npm run worker:deploy` (after `npx cf auth login`). Or add the repository secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts, D1 and R2: Edit; Account Settings: Read) and `CLOUDFLARE_ACCOUNT_ID`, and every push to `main` deploys (`.github/workflows/deploy.yml`). R2 has to be turned on once in the dashboard before the first deploy.
+
+**When sync goes wrong:** More › Settings shows the sync state and any error; tapping the line under the top bar syncs now. The phone's waiting changes are in the `outbox` table (Safari's Web Inspector › Storage). A phone can always go back to the server's copy: Full backup, then delete the home-screen app and Safari's data for the address, and open it again (it downloads everything).

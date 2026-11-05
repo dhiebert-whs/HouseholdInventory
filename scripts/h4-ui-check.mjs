@@ -154,7 +154,7 @@ try {
   await waitFor(`document.querySelector('.tabs')`, 60000);
   await waitFor(`document.querySelector('.hbody, .fbody')`);
   const up = await js(`return { areas: await idb('areas'), bins: await idb('bins'), items: await idb('items'), seasons: await idb('seasons'), cats: await idb('categoryList'), tags: await idb('tagList'), schema: (await idb('settings')).find((s) => s.key === 'schemaVersion')?.value }`);
-  check('upgrade: schema 5; area, bin and item in Household; codes from names (A-04 → ATTIC-04); the bin and item lose their season', [up.schema, up.areas.map((a) => [a.part, a.code]), up.bins.map((b) => [b.part, b.seasonId, b.code]), up.items.map((i) => [i.part, i.seasonId, i.binId])], [5, [['household', 'ATTIC']], [['household', '', 'ATTIC-04']], [['household', '', 'bn-XMAS0004']]]);
+  check('upgrade: schema 6; area, bin and item in Household; codes from names (A-04 → ATTIC-04); the bin and item lose their season', [up.schema, up.areas.map((a) => [a.part, a.code]), up.bins.map((b) => [b.part, b.seasonId, b.code]), up.items.map((i) => [i.part, i.seasonId, i.binId])], [6, [['household', 'ATTIC']], [['household', '', 'ATTIC-04']], [['household', '', 'bn-XMAS0004']]]);
   check('upgrade: Christmas kept with its default dates; lists in Household, Holiday defaults added', [up.seasons.map((s) => [s.name, s.setupFrom, s.takedownBy]), up.cats.filter((c) => c.part === 'household').map((c) => c.name), up.cats.filter((c) => c.part === 'holiday').length, up.tags.map((t) => [t.part, t.name])], [[['Christmas', '11-25', '01-06']], ['Decorations', 'Other'], 10, [['household', 'Fragile']]]);
   check('first open: the Holiday part, Season tab (§12.5)', await js(`return [part(), tabs(), current()]`), ['holiday', ['Season', 'Find', 'Browse', 'Scan', 'Lists', 'More'], 'Season']);
   await shot('01-upgraded-season-home');
@@ -229,7 +229,7 @@ try {
   // Browse.
   await js(`await go('#/holiday/browse'); await click('.vsw .fchip', 'By season'); await settle(400); await click('.ghdr-t', 'Christmas'); await settle(300);`);
   check('Holiday Browse by season: Christmas › STORAGE-01', await js(`return $$('.ghdr .gn').map((e) => norm(e.textContent)).slice(0, 2)`), ['Christmas', 'STORAGE-01 Christmas lights']);
-  check('Holiday Browse highlights Find; Household Browse has no By season', await js(`const a = current(); await go('#/household/browse'); return [a, current(), $$('.vsw .fchip').map((b) => norm(b.textContent))]`), ['Find', 'Browse', ['By place', 'By category']]);
+  check('Holiday Browse has its own tab (PR #12); Household Browse has no By season', await js(`const a = current(); await go('#/household/browse'); return [a, current(), $$('.vsw .fchip').map((b) => norm(b.textContent))]`), ['Browse', 'Browse', ['By place', 'By category']]);
   await js(`await click('.vsw .fchip', 'By place'); await settle(300); await click('.ghdr-t', 'Garage'); await settle(300); await click('.ghdr-t', 'Pegboard'); await settle(300); await click('.ghdr-t', 'GARAGE-01'); await settle(300);`);
   check('Household Browse by place: Garage › Pegboard › GARAGE-01 › the cord', await js(`return [$$('.ghdr .gn').map((e) => norm(e.textContent)), $$('.row .rname').map((e) => norm(e.textContent))]`), [['Garage', 'Pegboard', 'GARAGE-01 Cords'], ['Extension cord']]);
   await shot('05-household-browse');
@@ -272,7 +272,7 @@ try {
   await js(`await go('#/holiday/lists');`);
   check('Holiday Lists: To buy, Needs attention, Out now', await js(`return $$('.lsec h2').map((e) => norm(e.textContent).replace(/ ·.*/, ''))`), ['To buy', 'Needs attention', 'Out now']);
   await js(`await go('#/holiday/more');`);
-  check('Holiday More: Areas & spots, Seasons, Displays, Categories, Tags, Labels…; version 0.1.4', await js(`return $$('.mrow .mt').map((e) => norm(e.textContent))`), ['Areas & spots', 'Seasons', 'Displays', 'Categories', 'Tags', 'Labels', 'Backup & restore', 'Settings', 'Hiebert Home Inventory', 'App version 0.1.4']);
+  check('Holiday More: Areas & spots, Seasons, Displays, Categories, Tags, Labels…; Activity; version 0.1.5', await js(`return $$('.mrow .mt').map((e) => norm(e.textContent))`), ['Areas & spots', 'Seasons', 'Displays', 'Categories', 'Tags', 'Labels', 'Backup & restore', 'Activity', 'Settings', 'Hiebert Home Inventory', 'App version 0.1.5']);
   await js(`await go('#/household/more');`);
   check('Household More has no Seasons or Displays', await js(`const t = $$('.mrow .mt').map((e) => norm(e.textContent)); return [t.includes('Seasons'), t.includes('Displays')]`), [false, false]);
 

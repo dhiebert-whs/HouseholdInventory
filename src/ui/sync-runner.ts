@@ -56,11 +56,10 @@ export function startSync(db: InventoryDb, api: SyncApi = httpApi()): () => void
   document.addEventListener('visibilitychange', onVisible);
   window.addEventListener('online', request);
   const timer = setInterval(() => document.visibilityState === 'visible' && navigator.onLine !== false && request(), EVERY);
-  // Each new outbox change (counted by its rev) pushes soon after.
+  // Each new outbox change (its rev is new) pushes soon after. The outbox is small.
   let lastRev = -1;
-  const sub = liveQuery(() => db.outbox.orderBy('rev').last()).subscribe({
-    next: (row) => {
-      const rev = row?.rev ?? 0;
+  const sub = liveQuery(async () => (await db.outbox.toArray()).reduce((m, r) => Math.max(m, r.rev), 0)).subscribe({
+    next: (rev) => {
       if (lastRev !== -1 && rev > lastRev) {
         clearTimeout(settle);
         settle = setTimeout(request, SETTLE);
@@ -138,8 +137,8 @@ export function syncLine(v: SyncView, now = Date.now()): string | null {
   const tail = waiting ? ` · ${waiting} change${waiting === 1 ? '' : 's'} waiting` : '';
   switch (v.status.kind) {
     case 'no-server':
-      return null;
     case 'starting':
+      return null;
     case 'syncing':
       return 'Syncing…';
     case 'offline':
