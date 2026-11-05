@@ -1,5 +1,10 @@
-// Settings (F18): the backup reminder period. H4 adds sign-out and devices.
-import { useState } from 'preact/hooks';
+// Settings (F18): the backup reminder period; during the H5 spike, the sign-in check (§12.4).
+// Sign-out and devices come with sync.
+import { useEffect, useState } from 'preact/hooks';
+import { isStandalone, loadSignInChecks, recordSignInCheck, type SignInCheck } from '../../../data/signin-log';
+import { formatDateTime } from '../../../domain/dates';
+import { checkSignIn, goSignIn, type SignIn } from '../../../io/signin';
+import { plural } from '../../components/common';
 import { REMINDER_DAYS_MAX, setSettings } from '../../../data/settings';
 import { BackButton, TopBar } from '../../components/common';
 import { useDb, useSettings } from '../../data-hooks';
@@ -78,7 +83,81 @@ export function SettingsScreen() {
             )}
           </div>
         </div>
+        <SignInCheckCard />
       </div>
     </>
+  );
+}
+
+const DAY = 86_400_000;
+
+function describe(r: SignIn, now: number): string {
+  switch (r.kind) {
+    case 'signed-in': {
+      const left = r.expiresAt === null ? '' : ` · session ends ${formatDateTime(new Date(r.expiresAt), new Date(now))}`;
+      const age = r.issuedAt === null ? '' : ` · signed in ${plural(Math.floor((now - r.issuedAt) / DAY), 'day')} ago`;
+      return `Signed in as ${r.email}${age}${left}`;
+    }
+    case 'signed-out':
+      return 'Signed out';
+    case 'offline':
+      return `Couldn’t reach the server (${r.message})`;
+    case 'no-server':
+      return 'This copy has no server (GitHub Pages). The sign-in check works on the workers.dev address.';
+  }
+}
+
+/** H5 spike (§12.4): who this phone is signed in as, and every check so far. */
+function SignInCheckCard() {
+  const db = useDb();
+  const [checks, setChecks] = useState<SignInCheck[]>([]);
+  const [now, setNow] = useState<{ at: number; result: SignIn } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void loadSignInChecks(db).then(setChecks);
+  }, [db]);
+  const run = async () => {
+    setBusy(true);
+    const result = await checkSignIn();
+    const at = Date.now();
+    setNow({ at, result });
+    if (result.kind !== 'no-server') setChecks(await recordSignInCheck(db, { at, result, standalone: isStandalone() }));
+    setBusy(false);
+  };
+  useEffect(() => void run(), []);
+  return (
+    <div class="setform card">
+      <div class="setrow">
+        <span class="lbl">Sign-in check (H5 test)</span>
+        <p class="small m0" role="status">
+          {now ? describe(now.result, now.at) : 'Checking…'}
+        </p>
+        <p class="small muted m0">Opened {isStandalone() ? 'from the home screen' : 'in the browser'}.</p>
+        <div class="inline-add">
+          <button type="button" class="btn" disabled={busy} onClick={() => void run()}>
+            Check now
+          </button>
+          {now?.result.kind === 'signed-out' && (
+            <button type="button" class="btn pri" onClick={goSignIn}>
+              Sign in
+            </button>
+          )}
+        </div>
+        {checks.length > 0 && (
+          <details>
+            <summary class="small">
+              {plural(checks.length, 'check')} on this phone, first {formatDateTime(new Date(checks[checks.length - 1]!.at))}
+            </summary>
+            <ul class="small notes-list">
+              {checks.map((c) => (
+                <li key={c.at}>
+                  {formatDateTime(new Date(c.at))} · {c.standalone ? 'home screen' : 'browser'} · {describe(c.result, c.at)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    </div>
   );
 }

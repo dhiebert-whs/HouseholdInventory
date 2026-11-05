@@ -1,6 +1,12 @@
 import { defineConfig } from 'vitest/config';
 import preact from '@preact/preset-vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { cloudflare } from '@cloudflare/vite-plugin';
+
+// `cf build`, `cf dev` and `cf deploy` run Vite with CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT set. Only then is the Worker
+// (worker/index.ts, cloudflare.config.ts) built too, and the app goes to the fixed Build Output
+// folder instead of dist, so `npm run build` (GitHub Pages) is unchanged.
+const forCloudflare = !!process.env.CLOUDFLARE_VITE_FORCE_BUILD_OUTPUT;
 
 export default defineConfig({
   // Relative base so the build works under any hosting sub-path.
@@ -16,6 +22,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'prompt',
       injectRegister: false,
+      // The plugin reads the top-level outDir, not the client build's, so name it for cf.
+      ...(forCloudflare && { outDir: '.cloudflare/output/v0/workers/default/assets' }),
       includeManifestIcons: false,
       manifest: {
         name: 'Hiebert Home Inventory',
@@ -38,9 +46,12 @@ export default defineConfig({
         // The zxing .wasm is about 1.1 MB.
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: 'index.html',
+        // Sign-in (H5) is a real page load through Cloudflare Access, never the cached app.
+        navigateFallbackDenylist: [/\/api\//],
         cleanupOutdatedCaches: true,
       },
     }),
+    forCloudflare && cloudflare(),
   ],
   test: {
     environment: 'node',

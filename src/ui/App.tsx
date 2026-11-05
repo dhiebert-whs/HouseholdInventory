@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import { InventoryDb, checkSchema } from '../data/db';
 import { isSetUp, watchPersistentStorage } from '../data/setup';
+import { watchSignIn } from '../data/signin-log';
+import { checkSignIn } from '../io/signin';
 import { TopBar } from './components/common';
 import { DbContext } from './data-hooks';
 import { BrowseScreen } from './screens/inventory/Inventory';
@@ -151,6 +153,9 @@ export function App() {
   useEffect(start, []);
   // Ask for persistent storage on every launch until granted, and again once installed (§2).
   useEffect(() => watchPersistentStorage(), []);
+  // H5 spike: how long a Cloudflare Access session lasts on this phone (§12.4).
+  const readyDb = boot.state === 'ready' ? boot.db : null;
+  useEffect(() => (readyDb ? watchSignIn(readyDb, () => checkSignIn()) : undefined), [readyDb]);
 
   if (boot.state === 'error') {
     return (

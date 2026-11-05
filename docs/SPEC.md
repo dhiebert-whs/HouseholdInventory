@@ -47,7 +47,7 @@ Users:
 | Server | One Cloudflare **Worker** (API + static app), **D1** (data), **R2** (photos and files), on Dan's free-tier account | Free tier, never sleeps, ~$0 for a family (§14) |
 | Sign-in | Cloudflare Access, one-time email code, a policy listing the family's email addresses. **Fallback** (§12.4) if it misbehaves in an iOS home-screen app | Real identity without passwords |
 | Address | `https://<name>.workers.dev`. A custom domain (~$10–12/yr) can be added later with no code change (Dan, 2026-11-02: free address for now) | |
-| Deploy | **Until H5:** GitHub Pages from `main` (as now). **From H5:** GitHub Actions on every merge to `main`: test, build, `wrangler deploy` | The app must share an origin with the API, or Safari blocks the sign-in cookie |
+| Deploy | **Until H5:** GitHub Pages from `main` (as now). **From H5:** GitHub Actions on every merge to `main`: test, build, `cf deploy` (the cf CLI; config in `cloudflare.config.ts`) | The app must share an origin with the API, or Safari blocks the sign-in cookie |
 | CSV, ZIP, QR, scanning | Papa Parse, JSZip, qrcode-generator, barcode-detector with the zxing WASM fallback (unchanged) | Safari has no native BarcodeDetector, so zxing is the main scanner |
 | Tests | Vitest for app and Worker; headless browser checks (`scripts/`) | As now |
 
