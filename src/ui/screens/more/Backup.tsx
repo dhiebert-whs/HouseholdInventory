@@ -34,7 +34,7 @@ function usePhotoStats(db: InventoryDb): PhotoStats | null {
   useEffect(() => {
     const sub = liveQuery(async () => {
       const rows = await db.pictures.toArray();
-      return { count: rows.length, bytes: rows.reduce((n, r) => n + r.full.size, 0), ids: new Set(rows.map((r) => r.id)) };
+      return { count: rows.length, bytes: rows.reduce((n, r) => n + (r.full?.size ?? r.bytes ?? 0), 0), ids: new Set(rows.map((r) => r.id)) };
     }).subscribe({ next: setStats, error: () => setStats(null) });
     return () => sub.unsubscribe();
   }, [db]);

@@ -121,6 +121,12 @@ export function useStorageStatus(): StorageStatus | null {
   return s;
 }
 
+/** Asks for a photo's full image (sync-runner.ts sets it; nothing without a server). */
+let onMissingFull: (photoId: string) => void = () => undefined;
+export function setMissingFullHandler(f: (photoId: string) => void): void {
+  onMissingFull = f;
+}
+
 /** One photo of a record's carousel (§8), with its full-size image while the screen is open. */
 export type PhotoView = {
   id: string;
@@ -141,7 +147,13 @@ export function usePhotos(ownerId: string): PhotoView[] {
     const sub = liveQuery(() => photosOf(db, ownerId)).subscribe({
       next: (rows) => {
         for (const u of urls) URL.revokeObjectURL(u);
-        const next = rows.map((r) => ({ id: r.id, url: URL.createObjectURL(r.full), caption: r.caption, taken: r.taken !== undefined, seasonId: r.seasonId ?? '' }));
+        // Another phone's photo shows its thumbnail while the image downloads (§12.3), and
+        // nothing until either has arrived.
+        for (const r of rows) if (!r.full) onMissingFull(r.id);
+        const next = rows.flatMap((r) => {
+          const image = r.full ?? r.thumb;
+          return image ? [{ id: r.id, url: URL.createObjectURL(image), caption: r.caption, taken: r.taken !== undefined, seasonId: r.seasonId ?? '' }] : [];
+        });
         urls = next.map((v) => v.url);
         setViews(next);
       },

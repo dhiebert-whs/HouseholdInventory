@@ -30,7 +30,7 @@ async function makeH1(name: string): Promise<void> {
   old.close();
 }
 
-describe('upgrade from H1 (schema v1 → v2 → v3 → v4 → v5)', () => {
+describe('upgrade from H1 (schema v1 → v2 → v3 → v4 → v5 → v6)', () => {
   it('turns locations into spots in Unsorted, keeps items, photos, lists and settings', async () => {
     const name = `up-${Math.random()}`;
     await makeH1(name);
@@ -63,7 +63,7 @@ describe('upgrade from H1 (schema v1 → v2 → v3 → v4 → v5)', () => {
     expect(pics).toHaveLength(1);
     expect(pics[0]).toMatchObject({ ownerType: 'item', ownerId: 'it-AAAAAAAA', kind: 'photo', order: 0, caption: '', taken: 4 });
     expect(pics[0]!.id).toMatch(/^ph-/);
-    expect(new Uint8Array(await pics[0]!.full.arrayBuffer())).toEqual(new Uint8Array([9, 8, 7]));
+    expect(new Uint8Array(await pics[0]!.full!.arrayBuffer())).toEqual(new Uint8Array([9, 8, 7]));
 
     expect((await db.seasons.orderBy('order').toArray()).map((s) => s.name)).toEqual(DEFAULT_SEASONS.map((s) => s.name));
     expect(await db.categoryList.where('part').equals('household').toArray()).toEqual([{ part: 'household', name: 'Decorations', order: 0, subcategories: ['Indoor'] }]);
@@ -100,7 +100,7 @@ describe('upgrade from H1 (schema v1 → v2 → v3 → v4 → v5)', () => {
     // H1's checkSchema compared against SCHEMA_VERSION 1: native version 50 / 10 = 5 > 1.
     const h1 = new Dexie(name);
     await h1.open();
-    expect(h1.verno).toBe(5);
+    expect(h1.verno).toBe(6);
     expect(((await h1.table('settings').get('schemaVersion')) as { value: number }).value).toBeGreaterThan(1);
     h1.close();
   });

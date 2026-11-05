@@ -242,7 +242,7 @@ describe('schema v5 (H4)', () => {
     dbs.push(db);
     await db.open();
     expect(await checkSchema(db)).toBe('ok');
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
     const s = await loadSnapshot(db);
     expect([s.items.length, s.bins.length, s.seasons.length, s.displays, s.seasonTasks, s.seasonRuns]).toEqual([1, 2, 2, [], [], []]);
     expect((await db.pictures.get('ph-OLD00001'))!.seasonId).toBeUndefined();

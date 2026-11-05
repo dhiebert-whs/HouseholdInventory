@@ -113,7 +113,7 @@ async function everything(db: InventoryDb) {
   const s = await loadSnapshot(db);
   const pics = await db.pictures.toArray();
   const photos = await Promise.all(
-    pics.sort((a, b) => a.id.localeCompare(b.id)).map(async (p) => ({ id: p.id, ownerType: p.ownerType, ownerId: p.ownerId, kind: p.kind, seasonId: p.seasonId ?? '', caption: p.caption, order: p.order, type: p.full.type, bytes: await blobBytes(p.full) })),
+    pics.sort((a, b) => a.id.localeCompare(b.id)).map(async (p) => ({ id: p.id, ownerType: p.ownerType, ownerId: p.ownerId, kind: p.kind, seasonId: p.seasonId ?? '', caption: p.caption, order: p.order, type: p.full!.type, bytes: await blobBytes(p.full!) })),
   );
   const byId = <T extends { id: string }>(l: T[]) => [...l].sort((a, b) => a.id.localeCompare(b.id));
   return { ...s, items: byId(s.items), bins: byId(s.bins), seasonTasks: byId(s.seasonTasks), seasonRuns: byId(s.seasonRuns), photos };
@@ -258,7 +258,7 @@ describe('older backups (SPEC v3.0 §3, §7)', () => {
     expect(s.categories.filter((c) => c.part === 'household').map((c) => c.name)).toEqual(['Decorations', 'Other']);
     expect(s.categories.filter((c) => c.part === 'holiday').map((c) => c.name)).toEqual([...DEFAULT_CATEGORIES.holiday]);
     expect(s.tags).toEqual([{ part: 'household', name: 'Fragile', order: 0 }]);
-    expect(await blobBytes((await photosOf(db, 'it-LIGHTS01'))[0]!.full)).toEqual([0xff, 0xd8, 7]);
+    expect(await blobBytes((await photosOf(db, 'it-LIGHTS01'))[0]!.full!)).toEqual([0xff, 0xd8, 7]);
   });
 
   it('hand-edited files: a blank part cell, or files that disagree about the part column, are refused', async () => {

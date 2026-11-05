@@ -79,7 +79,7 @@ describe('photos missing from the ZIP', () => {
     const plan = await restoreInto(db, await zipOf(db, (z) => z.remove('photos/ph-1.jpg')));
     expect(plan.missingImages).toEqual(['ph-1']);
     expect(plan.warnings).toContain('1 photo file(s) named in the backup aren\'t in the ZIP');
-    expect(await blobBytes((await photosOf(db, 'a1'))[0]!.full)).toEqual([0xff, 0xd8, 1]);
+    expect(await blobBytes((await photosOf(db, 'a1'))[0]!.full!)).toEqual([0xff, 0xd8, 1]);
     expect((await db.items.get('a1'))!.hasPhoto).toBe(true);
   });
 
