@@ -37,7 +37,8 @@ export type Route =
   | { tab: 'more'; screen: 'labels'; ids: string[] }
   | { tab: 'more'; screen: ManagedList }
   | { tab: 'more'; screen: 'backup' }
-  | { tab: 'more'; screen: 'settings' };
+  | { tab: 'more'; screen: 'settings' }
+  | { tab: 'more'; screen: 'activity' };
 
 const TABS: readonly Tab[] = ['season', 'find', 'browse', 'scan', 'lists', 'more'];
 const LISTS: readonly ManagedList[] = ['categories', 'places', 'seasons', 'tags', 'displays'];
@@ -69,6 +70,7 @@ export function parseHash(hash: string): Route {
     if (list) return { tab: 'more', screen: list };
     if (parts[1] === 'backup') return { tab: 'more', screen: 'backup' };
     if (parts[1] === 'settings') return { tab: 'more', screen: 'settings' };
+    if (parts[1] === 'activity') return { tab: 'more', screen: 'activity' };
   }
   const part = parts[0] === 'household' || parts[0] === 'holiday' ? parts[0] : null;
   const name = part ? parts[1] : parts[0];
@@ -109,6 +111,7 @@ export const href = {
   list: (l: ManagedList) => `#/more/${l}`,
   backup: '#/more/backup',
   settings: '#/more/settings',
+  activity: '#/more/activity',
 };
 
 // History entries are numbered and remember the screen they were opened from, so Back can

@@ -6,8 +6,12 @@ import { loadSnapshot, replaceAll, type ReplaceAllInput } from './inventory';
 import { photoInfo } from './photos';
 import { setSettings } from './settings';
 
-/** The backup file's contents, read in one transaction so records and photos agree. */
-export async function buildBackup(db: InventoryDb, kind: BackupKind, now: Date): Promise<Blob> {
+/**
+ * The backup file's contents, read in one transaction so records and photos agree. Photos from
+ * other phones whose image isn't here yet are fetched with `fetchFull` (§12.3) when given; any
+ * still missing are listed without an image, and a restore keeps the phone's own copy.
+ */
+export async function buildBackup(db: InventoryDb, kind: BackupKind, now: Date, fetchFull?: (photoId: string) => Promise<Blob | null>): Promise<Blob> {
   if (kind === 'data') {
     const snap = await loadSnapshot(db);
     return new Blob([buildDataCsv(snap)], { type: 'text/csv' });
@@ -16,7 +20,12 @@ export async function buildBackup(db: InventoryDb, kind: BackupKind, now: Date):
     snap: await loadSnapshot(db),
     rows: await db.pictures.toArray(),
   }));
-  return buildFullBackup({ ...snap, photos: rows.map(photoInfo) }, new Map(rows.map((p) => [p.id, p.full] as const)), now);
+  const images = new Map<string, Blob>();
+  for (const p of rows) {
+    const full = p.full ?? (fetchFull ? await fetchFull(p.id).catch(() => null) : null);
+    if (full) images.set(p.id, full);
+  }
+  return buildFullBackup({ ...snap, photos: rows.map(photoInfo) }, images, now);
 }
 
 /** Exporting (shared or saved) resets the reminder clock (F18). */

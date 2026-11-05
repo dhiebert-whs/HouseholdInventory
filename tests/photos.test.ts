@@ -29,7 +29,7 @@ describe('photos on a record', () => {
     await addPhotos(db, 'item', 'a', [{ full: jpeg(1), thumb: jpeg(11) }, { full: jpeg(2), thumb: null }], 5);
     await addPhotos(db, 'item', 'a', [{ full: jpeg(3), thumb: null }], 6);
     const list = await photosOf(db, 'a');
-    expect(await Promise.all(list.map((p) => bytesOf(p.full)))).toEqual([[1], [2], [3]]);
+    expect(await Promise.all(list.map((p) => bytesOf(p.full!)))).toEqual([[1], [2], [3]]);
     expect(list.map((p) => [p.order, p.ownerType, p.kind, p.taken])).toEqual([
       [0, 'item', 'photo', 5],
       [1, 'item', 'photo', 5],
@@ -142,7 +142,7 @@ describe('photos follow their records', () => {
     const copy = await duplicateItem(db, 'a');
     const mine = await photosOf(db, 'a');
     const theirs = await photosOf(db, copy.id);
-    expect(await Promise.all(theirs.map((p) => bytesOf(p.full)))).toEqual([[1], [2]]);
+    expect(await Promise.all(theirs.map((p) => bytesOf(p.full!)))).toEqual([[1], [2]]);
     expect(theirs.some((p) => mine.some((m) => m.id === p.id))).toBe(false);
     expect((await db.items.get(copy.id))!.hasPhoto).toBe(true);
   });
@@ -177,7 +177,7 @@ describe('photos saved with the editor (F16)', () => {
     const [old] = await photosOf(db, 'a');
     const base = (await db.items.get('a'))!;
     await updateItem(db, base, { ...base, notes: 'x' }, 7, { add: [{ full: jpeg(2), thumb: null }], remove: [old!.id] });
-    expect(await Promise.all((await photosOf(db, 'a')).map((p) => bytesOf(p.full)))).toEqual([[2]]);
+    expect(await Promise.all((await photosOf(db, 'a')).map((p) => bytesOf(p.full!)))).toEqual([[2]]);
     const now = (await db.items.get('a'))!;
     await expect(updateItem(db, now, { ...now, name: '' }, 8, { add: [], remove: [(await photosOf(db, 'a'))[0]!.id] })).rejects.toThrow();
     expect((await photosOf(db, 'a')).length).toBe(1);

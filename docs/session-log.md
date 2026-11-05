@@ -1130,3 +1130,27 @@ H3 (PR #7) and the area-code change (PR #8); SPEC v3.0 §15 H4; the approved H3 
 ## 2026-11-03 (afternoon) — H4 merged and deployed; (a)–(n) accepted
 
 Dan: "merged. check deploy. decisions a-n accepted." PR #9 merged 14:41 CST. Its deploy run succeeded (1 m 15 s), and the live site serves 0.1.4 (checked in the bundle). Decisions (a)–(n) recorded in SPEC §16 and `docs/reviews/H4.md`. **Next:** Full backup on the phone, install 0.1.4, the phone check in `docs/reviews/H4.md` (step 8: the `.ics` on an iPhone), then H5.
+
+## 2026-11-05 — H5 sync built (branch `h5-sync`)
+
+Dan: H4 step 8 (the `.ics` on the iPhone) passed; spike questions 2 and 3 wait; "build h5 sync, moving forward with option a" (merge the spike's Worker into `main` first).
+
+**WORK COMPLETED**
+- PR #13 (the sign-in spike) merged into `main`, its description saying questions 2 and 3 continue there.
+- Branch `h5-sync` from `main`:
+  - the Worker: Access token check, D1 records with a sequence-number cursor, push with validation (shared `src/domain/sync.ts`), bin-code renumbering, overwrite notes, ticked-task merge, the activity log, R2 photo files, daily purge; `cloudflare.config.ts` gets D1, R2, the Access team and audience, a daily trigger;
+  - the phone: schema v6, the outbox middleware, `syncOnce` (pull, push, pull, photos), link repair, first sync and first download;
+  - screens: the sync line and banners, More › Activity and each record's last 10 entries, Settings' sync card and your name, restore wording;
+  - the Cloudflare deploy job (skipped until the secrets exist); version 0.1.5.
+- `docs/reviews/H5.md` with details (a)–(n); SPEC, HANDOFF §9 and H4's step 8 updated.
+
+**EVIDENCE**
+- Unit tests: 538/538 pass (41 files), including the Worker on D1 over SQLite and two phones syncing through it.
+- Build and both type checks clean; the H4 browser check passes 90/90 on the copy with no server (three stale expectations updated).
+- Not yet: a deployed Worker in a real browser (R2 must be turned on first), the independent review.
+
+**CONFIDENCE**
+- High for the sync rules (tested end to end through the real Worker code).
+- Medium for Cloudflare specifics not testable here: D1's and R2's bindings, the first deploy creating them, Access's real tokens.
+
+**Next:** Dan turns on R2, deploys, runs the phone check in `docs/reviews/H5.md`, and reviews (a)–(n); an independent review in a fresh session.

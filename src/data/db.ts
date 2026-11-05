@@ -1,12 +1,15 @@
 // IndexedDB schema (SPEC v3.0 §2, §3). Database `home-inventory`: v1 was H1's flat locations,
 // v2 (H2a) is Area › Spot › Bin › Item with seasons, tags and several photos per record, v3 (H3)
 // splits everything into the Household and Holiday parts, v4 gives areas codes from their names,
-// v5 (H4) adds the Holiday setup: displays, season tasks and season runs.
+// v5 (H4) adds the Holiday setup: displays, season tasks and season runs, v6 (H5) adds sync: the
+// outbox, photos to upload, sync state, people and the activity log.
 // Never edit a version once a phone has data in it (HANDOFF §5); add the next one.
 import Dexie, { type Table, type Transaction } from 'dexie';
 import { convertH1, itemFromH1 } from '../domain/h1';
 import { ID_PREFIX, newId } from '../domain/ids';
 import { fromV2, lettersToCodes, type V2Data } from '../domain/parts';
+import type { Activity, Person } from '../domain/sync';
+import { outboxMiddleware, type OutboxRow, type UploadRow } from './outbox';
 import { nameKey, type Area, type Bin, type Category, type Display, type Item, type Part, type PhotoInfo, type Season, type SeasonRun, type SeasonTask, type Spot, type Tag } from '../domain/types';
 
 export { UNSORTED_AREA } from '../domain/h1';
@@ -33,13 +36,17 @@ export interface TagRow extends Tag {
 
 /** A photo: its record (§3) and the image. */
 export interface PhotoRow extends PhotoInfo {
-  /** JPEG, about 1600 px on the long side (§8). */
-  full: Blob;
+  /** JPEG, about 1600 px on the long side (§8). null for a photo from another phone until it is downloaded (§12.3). */
+  full: Blob | null;
   /** Small JPEG for list rows; null until generated (needs a browser canvas). */
   thumb: Blob | null;
   updatedAt: number;
   /** Set when the photo was taken or chosen on this phone; absent for restored photos. */
   taken?: number;
+  /** Set by the server once the image is uploaded (§3, §12.3). */
+  r2Key?: string;
+  contentType?: string;
+  bytes?: number;
 }
 
 export interface SettingRow {
@@ -50,7 +57,7 @@ export interface SettingRow {
 export const DB_NAME = 'home-inventory';
 
 /** The schema this code was built for. Stored as a setting so an older copy can tell. */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const SCHEMA_KEY = 'schemaVersion';
 
 export class InventoryDb extends Dexie {
@@ -68,6 +75,13 @@ export class InventoryDb extends Dexie {
   displays!: Table<DisplayRow, string>;
   seasonTasks!: Table<SeasonTaskRow, string>;
   seasonRuns!: Table<SeasonRunRow, string>;
+  /** H5 sync (§12): changes waiting to be pushed, photos waiting to upload, the sync state. */
+  outbox!: Table<OutboxRow, string>;
+  uploads!: Table<UploadRow, string>;
+  syncMeta!: Table<SettingRow, string>;
+  /** From the server: everyone signed in, and the activity log (F17). */
+  people!: Table<Person, string>;
+  activity!: Table<Activity, string>;
 
   constructor(name = DB_NAME) {
     super(name);
@@ -115,6 +129,15 @@ export class InventoryDb extends Dexie {
       seasonTasks: 'id, seasonId',
       seasonRuns: 'id, seasonId',
     });
+    // H5 (0.1.5). New, empty tables. Changes from here on are recorded in the outbox (outbox.ts).
+    this.version(6).stores({
+      outbox: 'key, seq',
+      uploads: 'id',
+      syncMeta: 'key',
+      people: 'id',
+      activity: 'id, at, recordId',
+    });
+    this.use(outboxMiddleware);
   }
 }
 

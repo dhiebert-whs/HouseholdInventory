@@ -3,6 +3,7 @@
 // More…: Split a line, Duplicate, Print QR label, Delete; in Holiday, Put out… or Put back (F5) and
 // its usual display (F22). The top bar shows the item's part in its
 // color (F21); opening an item of the other part switches the app to it. H7 restyles it.
+import { RecentActivity } from '../more/Activity';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { adjustQuantity, setQuantity, type InventorySnapshot } from '../../../data/inventory';
@@ -228,6 +229,7 @@ function Detail({ item, snap, back }: { item: Item; snap: InventorySnapshot; bac
           <div class="dchips">
             <span class="chip mut">ID {item.id}</span>
           </div>
+          <RecentActivity recordId={item.id} />
         </div>
       </div>
 

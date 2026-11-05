@@ -35,7 +35,7 @@ import {
 import { CATEGORIES_FILE, serializeCategoriesCsv } from './lists-csv';
 
 export const APP_NAME = 'Hiebert Home Inventory';
-export const APP_VERSION = '0.1.4';
+export const APP_VERSION = '0.1.5';
 
 export type BackupKind = 'full' | 'data';
 

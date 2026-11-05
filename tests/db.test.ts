@@ -116,13 +116,13 @@ describe('settings', () => {
 });
 
 describe('schema (SPEC v3.0 §2, D1)', () => {
-  it('database home-inventory at schema v5 (H4, the Holiday setup)', async () => {
+  it('database home-inventory at schema v6 (H5, sync)', async () => {
     expect(DB_NAME).toBe('home-inventory');
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
     fresh();
     await db.open();
     expect(await checkSchema(db)).toBe('ok');
-    expect((await db.settings.get(SCHEMA_KEY))?.value).toBe(5);
+    expect((await db.settings.get(SCHEMA_KEY))?.value).toBe(6);
   });
 
   it('an older copy of the app refuses a newer database without writing to it', async () => {

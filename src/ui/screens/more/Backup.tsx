@@ -15,6 +15,7 @@ import { forgetAllThumbnails, useDb, useNow, useSettings, useSnapshot, useStorag
 import { Icon } from '../../icons';
 import { BackupBanner } from '../../shell/BackupBanner';
 import { href } from '../../shell/router';
+import { syncStatus } from '../../sync-runner';
 import { getPart } from '../../part';
 import { showToast } from '../../shell/toast';
 import { StorageError } from '../StorageError';
@@ -34,7 +35,7 @@ function usePhotoStats(db: InventoryDb): PhotoStats | null {
   useEffect(() => {
     const sub = liveQuery(async () => {
       const rows = await db.pictures.toArray();
-      return { count: rows.length, bytes: rows.reduce((n, r) => n + r.full.size, 0), ids: new Set(rows.map((r) => r.id)) };
+      return { count: rows.length, bytes: rows.reduce((n, r) => n + (r.full?.size ?? r.bytes ?? 0), 0), ids: new Set(rows.map((r) => r.id)) };
     }).subscribe({ next: setStats, error: () => setStats(null) });
     return () => sub.unsubscribe();
   }, [db]);
@@ -178,6 +179,7 @@ export function BackupScreen() {
             <p class="bk-p">
               Replaces <strong>all</strong> inventory on this phone, both parts, with a full backup (ZIP). A backup from version 0.1.2 also works: everything in it goes
               to Household and its seasons to Holiday. Backups from 0.1.1 can no longer be read.
+              {syncStatus().kind !== 'no-server' && <> With sync on, the server and every family phone get the backup’s data too (F18).</>}
             </p>
             <button type="button" class="btn lg" disabled={!!busy || !phone} onClick={restorePicker.open}>
               <Icon name="upload" class="ic flip" />
@@ -193,6 +195,7 @@ export function BackupScreen() {
             <p class="bk-p">
               Replaces <strong>all</strong> inventory on this phone, both parts, with a made-up house: areas, spots, bins, items, displays and setup lists. Only while the app
               is being built.
+              {syncStatus().kind !== 'no-server' && <> With sync on, it replaces the family’s data on every phone too.</>}
             </p>
             <button type="button" class="btn lg" disabled={!!busy || !phone} onClick={() => setDlg({ kind: 'sample' })}>
               Load sample data…

@@ -147,8 +147,12 @@ export async function getThumbnail(db: InventoryDb, ownerId: string, make: (full
   const row = (await photosOf(db, ownerId))[0];
   if (!row) return null;
   if (row.thumb) return row.thumb;
-  const thumb = await make(row.full);
-  await db.transaction('rw', db.pictures, async () => {
+  // A photo from another phone shows once its thumbnail or image has downloaded (§12.3).
+  if (!row.full) return null;
+  const full = row.full;
+  const thumb = await make(full);
+  // syncMeta in the scope: a thumbnail is this phone's own, not a change to sync (outbox.ts).
+  await db.transaction('rw', db.pictures, db.syncMeta, async () => {
     const now = await db.pictures.get(row.id);
     if (now && now.updatedAt === row.updatedAt && !now.thumb) await db.pictures.update(row.id, { thumb });
   });
