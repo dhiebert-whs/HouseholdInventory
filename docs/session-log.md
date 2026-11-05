@@ -1154,3 +1154,21 @@ Dan: H4 step 8 (the `.ics` on the iPhone) passed; spike questions 2 and 3 wait; 
 - Medium for Cloudflare specifics not testable here: D1's and R2's bindings, the first deploy creating them, Access's real tokens.
 
 **Next:** Dan turns on R2, deploys, runs the phone check in `docs/reviews/H5.md`, and reviews (a)–(n); an independent review in a fresh session.
+
+## 2026-11-05 — H5 independent review (branch `h5-review-fixes`)
+
+Dan: "decisions a-n ok. phone tests passed. begin independent review of h5", then "fix 1, 2, 3 and low items".
+
+**WORK COMPLETED**
+- Review in a fresh session (SPEC §15), recorded in `docs/reviews/H5.md` › Independent review.
+- Fixed: link repair that read "not arrived yet" as "deleted" (push order, server-side clearing of links to deleted records, phone repair limited to pulled deletes); Access key rotation; push in a few D1 queries and one batch; one person per email; images only with nosniff; a reset keeping photos not yet uploaded; a renumbered bin keeping its number; activity trimmed on phones; failed thumbnail downloads not retried every sync.
+
+**EVIDENCE**
+- Unit tests: 552/552 pass (41 files); 12 of the 14 new tests fail on the code before the fixes.
+- Build and both type checks clean; the H4 browser check passes with no console errors (copy with no server).
+
+**CONFIDENCE**
+- High for the repair and ordering fix (reproduced, then tested end to end on two phones through the Worker).
+- Medium for the D1 query rounds on real D1 (`(type, id) IN (SELECT … json_each)` runs on SQLite here; D1 runs the same engine).
+
+**Next:** Dan merges, deploys the Worker (`npm run worker:deploy`) and reloads the app on each phone.

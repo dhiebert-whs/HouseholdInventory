@@ -1,19 +1,24 @@
 // Stand-ins for the Worker's bindings in tests: D1 over Node's built-in SQLite (the same SQL
-// engine D1 runs), R2 as a Map, and Access tokens signed with a key made for the test.
+// engine D1 runs), R2 as a Map, and Access tokens signed with a key made for the test. The D1
+// stand-in counts queries the way D1 does against its per-request limit (a batch is one).
 import { DatabaseSync } from 'node:sqlite';
 import type { D1Database, R2Bucket } from '../worker/bindings';
 import type { Env } from '../worker/index';
 
 type Value = string | number | null;
 
+/** D1's limit on queries per Worker request on the free plan. */
+export const FREE_QUERIES = 50;
+
 class Stmt {
   constructor(
     private readonly sql: DatabaseSync,
     readonly q: string,
     readonly args: Value[] = [],
+    private readonly count: { queries: number } = { queries: 0 },
   ) {}
   bind(...args: Value[]) {
-    return new Stmt(this.sql, this.q, args);
+    return new Stmt(this.sql, this.q, args, this.count);
   }
   private reads() {
     return /^\s*select/i.test(this.q);
@@ -25,23 +30,29 @@ class Stmt {
     return { results: [], success: true };
   }
   async first(col?: string) {
+    this.count.queries++;
     const r = this.sql.prepare(this.q).get(...this.args) as Record<string, unknown> | undefined;
     if (!r) return null;
     return col ? (r[col] ?? null) : { ...r };
   }
   async all() {
+    this.count.queries++;
     return this.exec();
   }
   async run() {
+    this.count.queries++;
     return this.exec();
   }
 }
 
-export function fakeD1(): D1Database {
+export function fakeD1(): D1Database & { count: { queries: number } } {
   const sql = new DatabaseSync(':memory:');
+  const count = { queries: 0 };
   return {
-    prepare: (q: string) => new Stmt(sql, q),
+    count,
+    prepare: (q: string) => new Stmt(sql, q, [], count),
     batch: async (stmts: Stmt[]) => {
+      count.queries++;
       sql.exec('BEGIN');
       try {
         const out = stmts.map((s) => s.exec());
@@ -52,7 +63,7 @@ export function fakeD1(): D1Database {
         throw e;
       }
     },
-  } as unknown as D1Database;
+  } as unknown as D1Database & { count: { queries: number } };
 }
 
 export function fakeR2(): R2Bucket & { objects: Map<string, { bytes: Uint8Array<ArrayBuffer>; type: string }> } {
@@ -80,11 +91,11 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
 const b64json = (o: object) => b64url(new TextEncoder().encode(JSON.stringify(o)));
 
 /** A signing key, its public JWK (as Access publishes it), and a token maker. */
-export async function accessKeys() {
+export async function accessKeys(kid = 'k1') {
   const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
-  const jwk = { ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid: 'k1' };
+  const jwk = { ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid };
   const sign = async (payload: object, key: CryptoKey = pair.privateKey) => {
-    const head = `${b64json({ alg: 'RS256', kid: 'k1' })}.${b64json(payload)}`;
+    const head = `${b64json({ alg: 'RS256', kid })}.${b64json(payload)}`;
     const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(head)));
     return `${head}.${b64url(sig)}`;
   };
@@ -93,7 +104,7 @@ export async function accessKeys() {
   return { jwk, sign, token };
 }
 
-export function testEnv(): Env & { FILES: ReturnType<typeof fakeR2> } {
+export function testEnv(): Env & { DB: ReturnType<typeof fakeD1>; FILES: ReturnType<typeof fakeR2> } {
   return {
     ASSETS: { fetch: async (r: Request) => new Response(`asset ${new URL(r.url).pathname}`) },
     DB: fakeD1(),

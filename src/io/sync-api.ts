@@ -47,7 +47,8 @@ export function httpApi(fetcher: Fetch = (i, init) => fetch(i, init), base = 'ap
   const post = (path: string, body: unknown) => go(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   return {
     pull: async (since) => readJson<PullResponse>(await go(`sync?since=${since}`)),
-    push: async (changes) => readJson<PushResponse>(await post('push', { changes })),
+    // In pushRank order (pushOnce), which lets the server clear what links to a delete.
+    push: async (changes) => readJson<PushResponse>(await post('push', { changes, ordered: true })),
     rename: async (name) => readJson<Person>(await post('me', { name })),
     async upload(photoId, image, thumb) {
       const res = check(await go(`files/${encodeURIComponent(photoId)}${thumb ? '?thumb=1' : ''}`, { method: 'PUT', headers: { 'content-type': image.type || 'image/jpeg' }, body: image }));

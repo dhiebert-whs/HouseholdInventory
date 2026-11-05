@@ -9,7 +9,7 @@
 //   GET  /api/signin           where the app sends someone to sign in
 import { FILE_MAX_BYTES, type PushRequest } from '../src/domain/sync';
 import type { D1Database, R2Bucket } from './bindings';
-import { jwtPayload, teamKeys, verifyAccess, type Identity } from './auth';
+import { jwtPayload, keysFor, verifyAccess, type Identity } from './auth';
 import { ensureSchema, personFor, photoExists, pull, purge, push, recordUpload, renamePerson } from './store';
 
 export { jwtPayload };
@@ -46,11 +46,13 @@ async function identify(request: Request, env: Env): Promise<Identity | null> {
     return local && email ? { email: email.toLowerCase(), issuedAt: null, expiresAt: null } : null;
   }
   if (!token) return null;
-  return verifyAccess(token, { team: env.ACCESS_TEAM, aud: env.ACCESS_AUD }, await teamKeys(env.ACCESS_TEAM));
+  return verifyAccess(token, { team: env.ACCESS_TEAM, aud: env.ACCESS_AUD }, await keysFor(token, env.ACCESS_TEAM));
 }
 
 const fileKey = (id: string, thumb: boolean) => `photos/${id}${thumb ? '.thumb' : ''}`;
 const PHOTO_ID = /^ph-[A-Za-z0-9_-]{1,32}$/;
+/** What a photo file may be (§8: the app sends JPEG). Anything else could run as a page on this origin. */
+const IMAGE_TYPE = /^image\/(jpeg|png|webp|heic|heif)$/;
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
   const { pathname } = url;
@@ -71,7 +73,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   if (pathname === '/api/push' && method === 'POST') {
     const body = (await request.json().catch(() => null)) as PushRequest | null;
     if (!body || !Array.isArray(body.changes)) return json({ error: 'bad push' }, 400);
-    return json(await push(env.DB, body.changes, me));
+    return json(await push(env.DB, body.changes, me, Date.now(), body.ordered === true));
   }
   if (pathname === '/api/me') {
     if (method === 'GET') return json(me);
@@ -89,15 +91,19 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     if (method === 'GET') {
       const obj = await env.FILES.get(fileKey(id, thumb));
       if (!obj) return json({ error: 'not uploaded yet' }, 404);
-      return new Response(obj.body, { headers: { 'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg', 'cache-control': 'private, max-age=31536000, immutable' } });
+      const type = obj.httpMetadata?.contentType ?? 'image/jpeg';
+      return new Response(obj.body, {
+        headers: { 'content-type': IMAGE_TYPE.test(type) ? type : 'application/octet-stream', 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=31536000, immutable' },
+      });
     }
     if (method === 'PUT') {
       // The record syncs first (§12.3); until then the phone retries.
       if (!(await photoExists(env.DB, id))) return json({ error: 'the photo’s record hasn’t synced yet' }, 409);
+      const contentType = request.headers.get('content-type') ?? 'image/jpeg';
+      if (!IMAGE_TYPE.test(contentType)) return json({ error: 'not an image' }, 415);
       const bytes = await request.arrayBuffer();
       if (bytes.byteLength === 0) return json({ error: 'empty file' }, 400);
       if (bytes.byteLength > FILE_MAX_BYTES) return json({ error: 'file too large' }, 413);
-      const contentType = request.headers.get('content-type') ?? 'image/jpeg';
       await env.FILES.put(fileKey(id, thumb), bytes, { httpMetadata: { contentType } });
       if (!thumb) await recordUpload(env.DB, id, { r2Key: fileKey(id, false), contentType, bytes: bytes.byteLength }, me);
       return json({ ok: true });
