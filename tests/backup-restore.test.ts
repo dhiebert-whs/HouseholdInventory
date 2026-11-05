@@ -143,7 +143,7 @@ describe('full backup ZIP (F18, §7)', () => {
     const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
     expect(manifest).toMatchObject({
       app: 'Hiebert Home Inventory',
-      appVersion: '0.1.4',
+      appVersion: '0.1.5',
       itemCount: 4,
       photoCount: 7,
       areaCount: 3,

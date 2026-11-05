@@ -1,8 +1,11 @@
-// Boot: open the inventory → storage error | first-launch setup (what the inventory starts with,
-// SPEC v3.0 §12.5) | app. Tab screens belong to a part (F21); their address says which.
+// Boot: open the inventory → storage error | first launch (SPEC v3.0 §12.5: download the
+// family's data from the server, or set up what the inventory starts with) | app, syncing (§12).
+// Tab screens belong to a part (F21); their address says which.
 import { useEffect, useState } from 'preact/hooks';
 import { InventoryDb, checkSchema } from '../data/db';
-import { isSetUp, watchPersistentStorage } from '../data/setup';
+import { SETUP_DONE, isSetUp, watchPersistentStorage } from '../data/setup';
+import { syncOnce } from '../data/sync';
+import { httpApi } from '../io/sync-api';
 import { watchSignIn } from '../data/signin-log';
 import { checkSignIn } from '../io/signin';
 import { TopBar } from './components/common';
@@ -13,6 +16,7 @@ import { SeasonHomeScreen } from './screens/home/SeasonHome';
 import { ListsScreen } from './screens/lists/Lists';
 import { DetailScreen } from './screens/item/Detail';
 import { EditorScreen } from './screens/item/Editor';
+import { ActivityScreen } from './screens/more/Activity';
 import { BackupScreen } from './screens/more/Backup';
 import { CategoriesScreen } from './screens/more/Categories';
 import { MoreScreen } from './screens/more/More';
@@ -31,10 +35,12 @@ import { AppOutdated, OpenBlocked, StorageError, UpdatedElsewhere } from './scre
 import { Shell } from './shell/Shell';
 import { homeTab, useRoute, type Route, type Tab } from './shell/router';
 import { setPart, usePart } from './part';
+import { startSync } from './sync-runner';
 
 type Boot =
   | { state: 'opening' }
-  | { state: 'ready'; db: InventoryDb; setup: boolean }
+  /** setup: first launch; download: the server has the family's data, so it comes down instead (§12.5). */
+  | { state: 'ready'; db: InventoryDb; setup: boolean; download?: boolean }
   | { state: 'error'; error: unknown }
   /** Another tab of the app holds the database while this one upgrades it. */
   | { state: 'blocked' }
@@ -58,6 +64,48 @@ async function openDb(on: { blocked: () => void; replaced: () => void }): Promis
     return 'outdated';
   }
   return db;
+}
+
+/** A new phone on the server's copy of the app: does the family already have data there? */
+async function serverHasData(): Promise<boolean> {
+  try {
+    return !(await httpApi().pull(0)).serverEmpty;
+  } catch {
+    return false;
+  }
+}
+
+/** First launch with the family's data on the server (§12.5): a full download, then the app. */
+function FirstDownload({ db, onDone, onFail }: { db: InventoryDb; onDone: () => void; onFail: () => void }) {
+  const [got, setGot] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void syncOnce(db, httpApi(), { onProgress: setGot }).then(async (s) => {
+      if (s.kind !== 'synced') return setError(s.kind === 'error' ? s.message : s.kind === 'offline' ? 'No connection.' : 'Sign in first.');
+      await db.settings.put({ key: SETUP_DONE, value: Date.now() });
+      onDone();
+    });
+  }, [db]);
+  return (
+    <>
+      <TopBar title="Hiebert Home Inventory" subtitle="First download" />
+      <div class="list" aria-busy={error ? undefined : 'true'}>
+        <div class="cathdr static">
+          <span class="hc">{error ? `The download stopped: ${error}` : `Downloading the family’s inventory… ${got} records`}</span>
+        </div>
+        {error && (
+          <div class="mbody">
+            <button type="button" class="btn" onClick={() => location.reload()}>
+              Try again
+            </button>
+            <button type="button" class="btn" onClick={onFail}>
+              Set up this phone instead
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
 }
 
 /** The tab a route shows: an address without a part opens the part in use at its home. */
@@ -111,6 +159,8 @@ function Screen({ route }: { route: Route }) {
       return <BackupScreen />;
     case 'settings':
       return <SettingsScreen />;
+    case 'activity':
+      return <ActivityScreen key={part} part={part} />;
     case 'tab':
       break;
   }
@@ -141,7 +191,9 @@ export function App() {
     openDb({ blocked: () => setBoot({ state: 'blocked' }), replaced: () => setBoot({ state: 'replaced' }) }).then(
       async (db) => {
         setFailures(0);
-        setBoot(db === 'outdated' ? { state: 'outdated' } : { state: 'ready', db, setup: !(await isSetUp(db)) });
+        if (db === 'outdated') return setBoot({ state: 'outdated' });
+        const setup = !(await isSetUp(db));
+        setBoot({ state: 'ready', db, setup, download: setup && (await serverHasData()) });
       },
       (error: unknown) => {
         setFailures((n) => n + 1);
@@ -156,6 +208,9 @@ export function App() {
   // H5 spike: how long a Cloudflare Access session lasts on this phone (§12.4).
   const readyDb = boot.state === 'ready' ? boot.db : null;
   useEffect(() => (readyDb ? watchSignIn(readyDb, () => checkSignIn()) : undefined), [readyDb]);
+  // Sync once the phone is set up (§12.1).
+  const syncDb = boot.state === 'ready' && !boot.setup ? boot.db : null;
+  useEffect(() => (syncDb ? startSync(syncDb) : undefined), [syncDb]);
 
   if (boot.state === 'error') {
     return (
@@ -182,6 +237,13 @@ export function App() {
             <span class="hc">Opening the inventory…</span>
           </div>
         </div>
+      </Shell>
+    );
+  }
+  if (boot.setup && boot.download) {
+    return (
+      <Shell tab={route.tab}>
+        <FirstDownload db={boot.db} onDone={() => setBoot({ ...boot, setup: false })} onFail={() => setBoot({ ...boot, download: false })} />
       </Shell>
     );
   }

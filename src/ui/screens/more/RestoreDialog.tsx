@@ -9,6 +9,7 @@ import { plural } from '../../components/common';
 import { forgetAllThumbnails, useDb } from '../../data-hooks';
 import { Icon } from '../../icons';
 import { showToast } from '../../shell/toast';
+import { syncStatus } from '../../sync-runner';
 import { exportBackup, exportMessage } from './export-backup';
 
 export interface PhoneNow {
@@ -129,7 +130,7 @@ export function RestoreDialog({ plan, phone, onClose }: { plan: RestorePlan; pho
       </p>
       <label class="tick">
         <input type="checkbox" checked={understood} disabled={!!busy} onChange={(e) => setUnderstood((e.currentTarget as HTMLInputElement).checked)} />
-        <span>I understand this replaces everything</span>
+        <span>I understand this replaces everything{syncStatus().kind !== 'no-server' ? ', on every family phone' : ''}</span>
       </label>
       {backedUp && (
         <p class="dlg-p small">

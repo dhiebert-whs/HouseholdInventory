@@ -370,6 +370,7 @@ input[type="date"].field { padding: 0 12px; }
 
 /* ── M4: order list (mockups 4a–4e) ── */
 .banner { flex: none; display: flex; align-items: center; gap: 14px; padding: 8px 16px 8px 24px; background: var(--navy); color: #fff; font-weight: 700; flex-wrap: wrap; }
+.syncline { flex: none; display: block; width: 100%; padding: 2px 16px; border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 13px; text-align: right; }
 .banner.warm { background: #fff7db; color: var(--ink); border-bottom: 1px solid #e8d9a8; }
 .banner .btn.sm { min-height: 48px; }
 .banner > .ic { flex: none; }

@@ -2,6 +2,7 @@
 // and tags, what's in it, its label ("Label out of date" with Reprint, §4), and Add item here,
 // Print label, Move bin (also to the other part), Edit, Delete; in Holiday, Unpack (F5). The top
 // bar shows the bin's part.
+import { RecentActivity } from '../more/Activity';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import type { InventorySnapshot } from '../../../data/inventory';
@@ -191,6 +192,7 @@ function BinDetail({ bin, snap, back }: { bin: Bin; snap: InventorySnapshot; bac
               </p>
             )}
           </div>
+          <RecentActivity recordId={bin.id} />
         </div>
       </div>
 

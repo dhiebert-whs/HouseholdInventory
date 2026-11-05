@@ -1,5 +1,8 @@
-# Build, test and deploy to GitHub Pages on every push to main.
-name: Deploy to GitHub Pages
+# Build, test and deploy on every push to main: GitHub Pages (the copy with no server, kept
+# until everyone has moved), and from H5 the Cloudflare Worker with sync (SPEC v3.0 §2).
+# The Cloudflare job needs the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets
+# (docs/HANDOFF.md); without them it is skipped.
+name: Deploy
 
 on:
   push:
@@ -40,3 +43,26 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    env:
+      CF_SEND_TELEMETRY: 'false'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "No CLOUDFLARE_API_TOKEN secret, so the Worker isn't deployed."
+      - if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: actions/checkout@v4
+      - if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npm ci
+      - if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npm test
+      - if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npm run worker:deploy

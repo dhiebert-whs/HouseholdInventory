@@ -1,13 +1,18 @@
-// Settings (F18): the backup reminder period; during the H5 spike, the sign-in check (§12.4).
-// Sign-out and devices come with sync.
+// Settings (F18): the backup reminder period; sync (F15): its state, who you're signed in as
+// and your name; during the H5 spike, the sign-in check (§12.4).
+import { liveQuery } from 'dexie';
 import { useEffect, useState } from 'preact/hooks';
+import { renameMe, signedInPerson } from '../../../data/sync';
+import type { Person } from '../../../domain/sync';
+import { httpApi } from '../../../io/sync-api';
+import { syncLine, syncNow, useSync } from '../../sync-runner';
 import { isStandalone, loadSignInChecks, recordSignInCheck, type SignInCheck } from '../../../data/signin-log';
 import { formatDateTime } from '../../../domain/dates';
 import { checkSignIn, goSignIn, type SignIn } from '../../../io/signin';
 import { plural } from '../../components/common';
 import { REMINDER_DAYS_MAX, setSettings } from '../../../data/settings';
 import { BackButton, TopBar } from '../../components/common';
-import { useDb, useSettings } from '../../data-hooks';
+import { useDb, useNow, useSettings } from '../../data-hooks';
 import { href } from '../../shell/router';
 import { getPart } from '../../part';
 import { showToast } from '../../shell/toast';
@@ -83,9 +88,83 @@ export function SettingsScreen() {
             )}
           </div>
         </div>
+        <SyncCard />
         <SignInCheckCard />
       </div>
     </>
+  );
+}
+
+/** Sync (F15): its state, who this phone is signed in as, and their name. */
+function SyncCard() {
+  const db = useDb();
+  const v = useSync(db);
+  const line = syncLine(v, useNow(30_000));
+  const [me, setMe] = useState<Person | null>(null);
+  const [name, setName] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const sub = liveQuery(() => signedInPerson(db)).subscribe({ next: setMe, error: () => undefined });
+    return () => sub.unsubscribe();
+  }, [db]);
+  if (line === null) {
+    return (
+      <div class="setform card">
+        <div class="setrow">
+          <span class="lbl">Sync</span>
+          <p class="small m0">This copy of the app has no server, so its data stays on this phone. The family’s copy is on the workers.dev address.</p>
+        </div>
+      </div>
+    );
+  }
+  const value = name ?? me?.name ?? '';
+  const save = async () => {
+    setBusy(true);
+    try {
+      await renameMe(db, httpApi(), value);
+      setName(null);
+      showToast('Name saved.');
+    } catch (e) {
+      showToast(`Couldn’t save the name (it needs a connection): ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="setform card">
+      <div class="setrow">
+        <span class="lbl">Sync</span>
+        <p class="small m0" role="status">
+          {line}
+          {v.status.kind === 'error' ? ` (${v.status.message})` : ''}
+        </p>
+        {me && <p class="small muted m0">Signed in as {me.email}.</p>}
+        <div class="inline-add">
+          <button type="button" class="btn" onClick={syncNow}>
+            Sync now
+          </button>
+          {v.status.kind === 'signed-out' && (
+            <button type="button" class="btn pri" onClick={goSignIn}>
+              Sign in
+            </button>
+          )}
+        </div>
+      </div>
+      {me && (
+        <div class="setrow">
+          <label class="lbl" for="set-name">
+            Your name
+          </label>
+          <p class="small muted m0">Shown in the activity log: “{value || me.name} moved Snowman lights…”.</p>
+          <div class="inline-add">
+            <input id="set-name" class="field" value={value} maxLength={40} disabled={busy} onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)} />
+            <button type="button" class="btn" disabled={busy || value.trim() === '' || value.trim() === me.name} onClick={() => void save()}>
+              Save name
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

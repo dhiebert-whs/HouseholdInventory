@@ -1,6 +1,7 @@
 // Spot detail (SPEC v3.0 §3, F11): photos, its area, the bins on it and its loose items. Actions:
 // Add bin here, Add item here, Print label, Rename, Move to another area (of the same part),
 // Remove. The dialogs are shared with More › Areas & spots. The top bar shows the spot's part.
+import { RecentActivity } from '../more/Activity';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import type { InventorySnapshot } from '../../../data/inventory';
@@ -121,6 +122,7 @@ function SpotDetail({ spot, snap, part, back }: { spot: Spot; snap: InventorySna
             <h2 class="h2">Loose items · {loose.length}</h2>
             <ItemLinks items={loose} empty="No loose items on this spot." />
           </div>
+          <RecentActivity recordId={spot.id} />
         </div>
       </div>
 

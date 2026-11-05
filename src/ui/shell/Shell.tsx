@@ -6,6 +6,7 @@ import { Icon, type IconName } from '../icons';
 import { usePart } from '../part';
 import { href, PART_TABS, type Tab } from './router';
 import { ToastHost } from './toast';
+import { SyncBanner } from './SyncBanner';
 import { UpdateBanner } from './UpdateBanner';
 
 const TAB_INFO: Readonly<Record<Tab, [string, IconName]>> = {
@@ -23,6 +24,7 @@ export function Shell({ tab, children }: { tab: Tab; children: ComponentChildren
     <div class="app" data-part={part}>
       <main class="main">
         <UpdateBanner />
+        <SyncBanner />
         {children}
       </main>
       <nav class="tabs" aria-label={part === 'holiday' ? 'Holiday tabs' : 'Household tabs'}>

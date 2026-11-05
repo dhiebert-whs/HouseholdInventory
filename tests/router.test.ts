@@ -38,6 +38,7 @@ describe('hash routes (SPEC v3.0 F21, §10)', () => {
     ['#/item/st-0063/edit', { tab: 'find', screen: 'edit', id: 'st-0063' }],
     ['#/more/backup', { tab: 'more', screen: 'backup' }],
     ['#/more/settings', { tab: 'more', screen: 'settings' }],
+    ['#/more/activity', { tab: 'more', screen: 'activity' }],
     ['#/more/categories', { tab: 'more', screen: 'categories' }],
     ['#/more/places', { tab: 'more', screen: 'places' }],
     ['#/more/seasons', { tab: 'more', screen: 'seasons' }],

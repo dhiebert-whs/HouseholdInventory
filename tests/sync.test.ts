@@ -230,3 +230,17 @@ describe('sync between two phones (§12)', () => {
     expect(await dan.outbox.count()).toBeGreaterThan(0);
   });
 });
+
+describe('the sync line (F15)', () => {
+  it('says how sync stands, with what is waiting', async () => {
+    const { syncLine } = await import('../src/ui/sync-runner');
+    const v = (status: Parameters<typeof syncLine>[0]['status'], waiting = 0, photosWaiting = 0) => ({ status, waiting, photosWaiting, lastAt: null, notices: [] });
+    const now = 10 * 60_000;
+    expect(syncLine(v({ kind: 'synced', at: now - 2 * 60_000 }), now)).toBe('Synced 2 min ago');
+    expect(syncLine(v({ kind: 'synced', at: now }), now)).toBe('Synced just now');
+    expect(syncLine(v({ kind: 'offline' }, 2, 1), now)).toBe('Offline · 3 changes waiting');
+    expect(syncLine(v({ kind: 'syncing' }), now)).toBe('Syncing…');
+    expect(syncLine(v({ kind: 'signed-out' }, 1), now)).toBe('Signed out · 1 change waiting');
+    expect(syncLine(v({ kind: 'no-server' }), now)).toBeNull();
+  });
+});

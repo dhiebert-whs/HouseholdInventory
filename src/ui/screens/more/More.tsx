@@ -69,7 +69,8 @@ export function MoreScreen({ part }: { part: Part }) {
           <div class="grp">
             <h3>Both parts</h3>
             <Row icon="upload" title="Backup & restore" sub={backupSub} to={href.backup} />
-            <Row icon="clock" title="Settings" sub={reminder} to={href.settings} />
+            <Row icon="lists" title="Activity" sub="Who changed what, newest first" to={href.activity} />
+            <Row icon="clock" title="Settings" sub={`Sync, your name · ${reminder}`} to={href.settings} />
           </div>
           <div class="grp">
             <h3>About</h3>
